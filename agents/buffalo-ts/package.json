@@ -1,0 +1,13 @@
+{
+	"dependencies": {
+		"@ai-sdk/openai": "2.0.0-beta.16",
+		"ai": "5.0.0-beta.34",
+		"dotenv": "^17.2.2",
+		"zod": "^4.1.8"
+	},
+	"devDependencies": {
+		"@types/node": "^24.4.0",
+		"tsx": "^4.20.5",
+		"typescript": "^5.9.2"
+	}
+}
