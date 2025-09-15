@@ -33,7 +33,7 @@ import uuid
 from browser_use import Agent, BrowserSession
 from pydantic import BaseModel, Field
 
-from agents.buffalo.configs import model, browser_llm, browser_profile
+from buffalo.configs import model, browser_llm, browser_profile
 
 class TestingTask(BaseModel):
     task: str = Field(description="The task to perform, ie navigate to the url, click on the element, fill in the form, etc.")

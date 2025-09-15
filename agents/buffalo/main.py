@@ -7,7 +7,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 import os
 import json
 import urllib.parse
-from agents.buffalo.qa_tools import buffalo_tools  # Import our browser automation tools
+from qa_tools import buffalo_tools  # Import our browser automation tools
 from configs import model
 
 load_dotenv()

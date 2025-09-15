@@ -20,10 +20,8 @@ async def start_test_session(base_url: str, unique_page_urls: list[str], num_age
     try:
         # Create a new test session in the db and get a test session id
         test_session_id = convex_client.mutation("testSessions:createTestSession", {
-            "base_url": base_url,
-            "unique_page_urls": unique_page_urls,
-            "num_agents": num_agents,
-            "headless": headless,
+            "websiteUrl": base_url,
+            "uniquePageUrls": unique_page_urls,
             "mode": mode
         })
         

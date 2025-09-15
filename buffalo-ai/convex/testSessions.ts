@@ -5,7 +5,6 @@ import { internal } from "./_generated/api";
 // Create a new test session
 export const createTestSession = mutation({
   args: {
-    websiteId: v.id("websites"),
     websiteUrl: v.string(),
     uniquePageUrls: v.optional(v.array(v.string())),
     mode: v.union(v.literal("exploratory"), v.literal("user_flow"), v.literal("all")),
