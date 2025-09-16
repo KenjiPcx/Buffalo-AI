@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react"
-import { io, Socket } from "socket.io-client"
 
 // Coral session connection similar to Svelte example
 class CoralSession {
@@ -127,68 +126,6 @@ class CoralSession {
     }
 }
 
-// User Input Socket.IO connection similar to Svelte example
-class UserInput {
-    private sock: Socket
-    public connected = false
-    public onStateChange?: () => void
-    public requests: {
-        [id: string]: {
-            id: string
-            sessionId: string
-            agentId: string
-            agentRequest: string
-            userQuestion?: string
-            agentAnswer?: string
-        }
-    } = {}
-
-    constructor() {
-        this.sock = io('/user-input')
-
-        this.sock.on('connect', () => {
-            console.log('user input connected')
-            this.connected = true
-            this.onStateChange?.()
-        })
-
-        this.sock.on('disconnect', () => {
-            console.log('user input disconnected')
-            this.connected = false
-            this.onStateChange?.()
-        })
-
-        this.sock.onAny((event: string, ...args: any[]) => {
-            console.log('user-input:', { event, args })
-        })
-
-        this.sock.on('agent_request', (req: any) => {
-            console.log('agent_request', req)
-            this.requests[req.id] = req
-            this.onStateChange?.()
-        })
-
-        this.sock.on('agent_answer', (req: any) => {
-            console.log('agent_answer', req)
-            if (this.requests[req.id]) {
-                this.requests[req.id].agentAnswer = req.answer
-            }
-            this.onStateChange?.()
-        })
-    }
-
-    respond(id: string, value: string) {
-        if (this.requests[id]) {
-            this.requests[id].userQuestion = value
-        }
-        this.sock.emit('user_response', { id, value })
-    }
-
-    close() {
-        this.sock.disconnect()
-    }
-}
-
 interface CoralConnectionsConfig {
     host?: string
     appId?: string
@@ -212,7 +149,6 @@ export function useCoralConnections({
     sessionId
 }: CoralConnectionsConfig) {
     const [coralSession, setCoralSession] = useState<CoralSession | null>(null)
-    const [userInput, setUserInput] = useState<UserInput | null>(null)
     const [activeUserInputRequest, setActiveUserInputRequest] = useState<UserInputRequest | null>(null)
     const [connectionState, setConnectionState] = useState({})
 
@@ -225,37 +161,20 @@ export function useCoralConnections({
             session: sessionId
         })
 
-        // Initialize UserInput Socket.IO connection
-        const userInputConnection = new UserInput()
-
         const handleStateChange = () => {
             setConnectionState({})
-
-            // Check for new user input requests from UserInput connection
-            const requests = Object.values(userInputConnection.requests)
-            const activeRequest = requests.find((req: any) => !req.userQuestion && !req.agentAnswer)
-            if (activeRequest && activeRequest !== activeUserInputRequest) {
-                setActiveUserInputRequest(activeRequest)
-            }
         }
 
         session.onStateChange = handleStateChange
-        userInputConnection.onStateChange = handleStateChange
 
         session.connect()
         setCoralSession(session)
-        setUserInput(userInputConnection)
 
         return () => {
             session.close()
-            userInputConnection.close()
         }
     }, [sessionId, host, appId, privacyKey])
 
-    const handleUserInput = (requestId: string, value: string) => {
-        userInput?.respond(requestId, value)
-        setActiveUserInputRequest(null)
-    }
 
     const closeUserInputModal = () => {
         setActiveUserInputRequest(null)
@@ -263,11 +182,8 @@ export function useCoralConnections({
 
     return {
         coralSession,
-        userInput,
         activeUserInputRequest,
-        handleUserInput,
         closeUserInputModal,
         isCoralConnected: coralSession?.connected ?? false,
-        isUserInputConnected: userInput?.connected ?? false,
     }
 }
