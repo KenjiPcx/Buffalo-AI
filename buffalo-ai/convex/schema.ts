@@ -29,6 +29,7 @@ export default defineSchema({
 
   // Test sessions - when we execute tests on a website
   testSessions: defineTable({
+    externalId: v.string(),
     websiteUrl: v.string(),
     uniquePageUrls: v.optional(v.array(v.string())),
     mode: v.union(v.literal("exploratory"), v.literal("user_flow"), v.literal("all")),
@@ -58,6 +59,7 @@ export default defineSchema({
     }))
   })
     .index("by_website", ["websiteUrl", "startedAt"])
+    .index("by_external_id", ["externalId"])
     .index("by_status", ["status"])
     .index("by_started", ["startedAt"]),
 

@@ -1,0 +1,3 @@
+[submodule "agents/coral-acidev"]
+	path = agents/coral-acidev
+	url = https://github.com/Coral-Protocol/Coral-AciDevMCP-Agent.git

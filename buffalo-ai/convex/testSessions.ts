@@ -5,6 +5,7 @@ import { internal } from "./_generated/api";
 // Create a new test session
 export const createTestSession = mutation({
   args: {
+    externalId: v.string(),
     websiteUrl: v.string(),
     uniquePageUrls: v.optional(v.array(v.string())),
     mode: v.union(v.literal("exploratory"), v.literal("user_flow"), v.literal("all")),
@@ -14,6 +15,7 @@ export const createTestSession = mutation({
 
     // Create the test session
     const testSessionId = await ctx.db.insert("testSessions", {
+      externalId: args.externalId,
       websiteUrl: args.websiteUrl,
       uniquePageUrls: args.uniquePageUrls,
       mode: args.mode,
@@ -22,6 +24,20 @@ export const createTestSession = mutation({
     });
 
     return testSessionId;
+  },
+});
+
+// Fetch a session by externalId
+export const getByExternalId = query({
+  args: {
+    externalId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const session = await ctx.db
+      .query("testSessions")
+      .withIndex("by_external_id", (q) => q.eq("externalId", args.externalId))
+      .unique();
+    return session ?? null;
   },
 });
 
@@ -63,26 +79,6 @@ export const cancelRun = mutation({
   },
 });
 
-// Get run by ID with all tasks
-export const getTestSessionWithTestExecutions = query({
-  args: { testSessionId: v.id("testSessions") },
-  handler: async (ctx, args) => {
-    const testSession = await ctx.db.get(args.testSessionId);
-    if (!testSession) return null;
-
-    const testExecutions = await ctx.db
-      .query("testExecutions")
-      .withIndex("by_testSession", (q) => q.eq("testSessionId", args.testSessionId))
-      .order("asc")
-      .collect();
-
-    return {
-      testSession,
-      testExecutions,
-    };
-  },
-});
-
 // Get latest runs for a website
 export const getWebsiteRuns = query({
   args: {
@@ -96,15 +92,5 @@ export const getWebsiteRuns = query({
       .withIndex("by_website", (q) => q.eq("websiteUrl", args.websiteId))
       .order("desc")
       .take(limit);
-  },
-});
-
-// Get all running test sessions
-export const getRunningTestSessions = query({
-  handler: async (ctx) => {
-    return await ctx.db
-      .query("testSessions")
-      .withIndex("by_status", (q) => q.eq("status", "running"))
-      .collect();
   },
 });

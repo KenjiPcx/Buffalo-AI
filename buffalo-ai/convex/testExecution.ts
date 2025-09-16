@@ -14,7 +14,7 @@ export const createTestExecution = internalMutation({
       testSessionId: args.testSessionId,
       name: args.name,
       prompt: args.prompt,
-      status: "running",
+      status: "pending",
     });
 
     return testExecutionId;
@@ -38,12 +38,23 @@ export const createTestExecutions = mutation({
         testSessionId: args.testSessionId,
         name: testExecution.name,
         prompt: testExecution.prompt,
-        status: "running",
+        status: "pending",
       });
       testExecutionIds.push(testExecutionId);
     }
 
     return testExecutionIds;
+  },
+});
+
+// Update test execution status
+export const updateTestExecutionStatus = mutation({
+  args: {
+    testExecutionId: v.id("testExecutions"),
+    status: v.union(v.literal("pending"), v.literal("running"), v.literal("completed"), v.literal("failed"), v.literal("skipped"))
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.testExecutionId, { status: args.status });
   },
 });
 
@@ -54,6 +65,23 @@ export const getTestSessionExecutions = query({
     return await ctx.db
       .query("testExecutions")
       .withIndex("by_testSession", (q) => q.eq("testSessionId", args.testSessionId))
+      .order("asc")
+      .collect();
+  },
+});
+
+export const getTestExecutionsBySessionExternalId = query({
+  args: { sessionExternalId: v.string() },
+  handler: async (ctx, args) => {
+    const session = await ctx.db
+      .query("testSessions")
+      .withIndex("by_external_id", (q) => q.eq("externalId", args.sessionExternalId))
+      .unique();
+    if (!session) return [];
+    
+    return await ctx.db
+      .query("testExecutions")
+      .withIndex("by_testSession", (q) => q.eq("testSessionId", session._id))
       .order("asc")
       .collect();
   },
