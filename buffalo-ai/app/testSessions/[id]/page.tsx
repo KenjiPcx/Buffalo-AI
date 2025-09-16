@@ -6,7 +6,6 @@ import { api } from "@/convex/_generated/api"
 import { useCoralConnections } from "@/hooks/useCoralConnections"
 import { TestExecutionCard } from "@/components/test-execution-card"
 import { UserInputModal } from "@/components/user-input-modal"
-import { requestUserInput } from "@/lib/mcpClient"
 
 
 export default function TestSessionPage() {
@@ -22,7 +21,6 @@ export default function TestSessionPage() {
         closeUserInputModal,
         isCoralConnected,
         isUserInputConnected,
-        agentId,
     } = useCoralConnections({ sessionId })
 
     // Query test executions from Convex
@@ -68,25 +66,6 @@ export default function TestSessionPage() {
                                 <div className={`w-2 h-2 rounded-full ${isUserInputConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
                                 <span className="text-xs text-muted-foreground">User Input</span>
                             </div>
-                            <button
-                                className="px-3 py-1 rounded bg-primary text-primary-foreground text-xs disabled:opacity-50"
-                                disabled={!agentId}
-                                onClick={async () => {
-                                    if (!agentId) return
-                                    try {
-                                        await requestUserInput({
-                                            baseUrl: '', // same-origin to Next route handlers
-                                            sessionId,
-                                            agentId,
-                                            message: 'Please provide a search query for the test.'
-                                        })
-                                    } catch (e) {
-                                        console.error(e)
-                                    }
-                                }}
-                            >
-                                Trigger Input
-                            </button>
                         </div>
                     </div>
                 </div>

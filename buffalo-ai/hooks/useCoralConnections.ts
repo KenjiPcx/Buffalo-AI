@@ -144,12 +144,7 @@ class UserInput {
     } = {}
 
     constructor() {
-        // ensure Next socket server is initialized
-        if (typeof window !== 'undefined') {
-            // fire and forget to boot the server if not yet created
-            fetch('/api/socketio').catch(() => { })
-        }
-        this.sock = io('/user-input', { path: '/api/socketio' })
+        this.sock = io('/user-input')
 
         this.sock.on('connect', () => {
             console.log('user input connected')
@@ -274,6 +269,5 @@ export function useCoralConnections({
         closeUserInputModal,
         isCoralConnected: coralSession?.connected ?? false,
         isUserInputConnected: userInput?.connected ?? false,
-        agentId: coralSession?.agentId ?? null,
     }
 }
