@@ -38,6 +38,7 @@ export default defineSchema({
         v.literal("preprod_checklist"),
       ),
     ),
+    messages: v.optional(v.array(v.string())),
     status: v.union(
       v.literal("pending"),
       v.literal("running"),
@@ -80,10 +81,12 @@ export default defineSchema({
       v.literal("failed"),
       v.literal("skipped")
     ),
+    websiteUrl: v.optional(v.string()),
+    type: v.optional(v.union(v.literal("exploratory"), v.literal("user_flow"), v.literal("preprod_checks"))),
     passed: v.optional(v.boolean()),
     message: v.optional(v.string()), // Result commentary from the agent
     errorMessage: v.optional(v.string()),
-    screenshots: v.optional(v.array(v.string())), // URL or base64 of screenshot
+    screenshots: v.optional(v.array(v.string())), // URL of screenshot
     executionTime: v.optional(v.number()), // Time in milliseconds
     startedAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),

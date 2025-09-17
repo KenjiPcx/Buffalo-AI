@@ -27,6 +27,7 @@ export const createTestSession = mutation({
       email: args.email,
       status: "running",
       startedAt: now,
+      messages: [],
     });
 
     return testSessionId;
@@ -96,5 +97,16 @@ export const getWebsiteRuns = query({
       .withIndex("by_website", (q) => q.eq("websiteUrl", args.websiteId))
       .order("desc")
       .take(limit);
+  },
+});
+
+export const addMessageToTestSession = mutation({
+  args: { testSessionId: v.id("testSessions"), message: v.string() },
+  handler: async (ctx, args) => {
+    const testSession = await ctx.db.get(args.testSessionId);
+    if (!testSession) throw new Error("Test session not found");
+
+    await ctx.db.patch(args.testSessionId, { messages: [...(testSession.messages || []), args.message] });
+    return args.testSessionId;
   },
 });

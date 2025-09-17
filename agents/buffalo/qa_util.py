@@ -24,34 +24,52 @@ Notes:
 4. Stop when bug found or task complete
 """
 
-from textwrap import dedent
+import base64
 import time
 import asyncio
 import json
-from typing import List, Dict, Any, Set
-import uuid
+from typing import List, Optional
 from browser_use import Agent, BrowserProfile, BrowserSession
+from browser_use.llm.messages import UserMessage
 from pydantic import BaseModel, Field
+import requests
 
-from configs import get_screen_dimensions, model, browser_llm, browser_profile
+from configs import convex_client, get_screen_dimensions, model, browser_llm, browser_profile
 
-_test_results = {}
+class TestExecutionResult(BaseModel):
+    is_working: bool = Field(description="Whether the test execution is working as expected")
+    message: str = Field(description="A message explaining the result")
+    error: Optional[str] = Field(description="An error message if the test execution failed")
 
-async def run_prod_checks(prod_checks: List[str], num_agents: int = 3, headless: bool = False):
+async def run_prod_checks(prod_checks: List[str], num_agents: int = 3, headless: bool = False, test_session_id: str = None):
     """
     QA check prod checks orchestrator, process tasks in batches
     """
-    for prod_check in prod_checks:
-        await run_pool(prod_check, num_agents, headless, tag="prod_checks")
+    await convex_client.mutation("testSessions:addMessageToTestSession", {
+        "testSessionId": test_session_id,
+        "message": f"Running {len(prod_checks)} prod checks"
+    })
+    await run_pool(prod_checks, num_agents, headless, tag="preprod_checks", test_session_id=test_session_id)
+    await convex_client.mutation("testSessions:addMessageToTestSession", {
+        "testSessionId": test_session_id,
+        "message": f"Completed {len(prod_checks)} prod checks"
+    })
 
-async def run_user_flow_testing(user_flow_tasks: List[str], num_agents: int = 3, headless: bool = False):
+async def run_user_flow_testing(user_flow_tasks: List[str], num_agents: int = 3, headless: bool = False, test_session_id: str = None):
     """
     QA check user flow tasks orchestrator, process tasks in batches
     """
-    for user_flow_task in user_flow_tasks:
-        await run_pool(user_flow_task, num_agents, headless, tag="user_flow_tasks")
+    await convex_client.mutation("testSessions:addMessageToTestSession", {
+        "testSessionId": test_session_id,
+        "message": f"Running {len(user_flow_tasks)} user flow tasks"
+    })
+    await run_pool(user_flow_tasks, num_agents, headless, tag="user_flow", test_session_id=test_session_id)
+    await convex_client.mutation("testSessions:addMessageToTestSession", {
+        "testSessionId": test_session_id,
+        "message": f"Completed {len(user_flow_tasks)} user flow tasks"
+    })
 
-async def run_exploratory_testing(starting_urls: List[str], num_agents: int = 3, headless: bool = False):
+async def run_exploratory_testing(starting_urls: List[str], num_agents: int = 3, headless: bool = False, test_session_id: str = None):
     """
     QA check websites orchestrator, it will:
     1. Loop through each starting URL
@@ -61,16 +79,54 @@ async def run_exploratory_testing(starting_urls: List[str], num_agents: int = 3,
     Args:
         starting_urls: List of starting URLs to test, these should be the starting points within a website to test
     """
+    await convex_client.mutation("testSessions:addMessageToTestSession", {
+            "testSessionId": test_session_id,
+            "message": f"Crawled {len(starting_urls)} starting URLs"
+        })
+
     for starting_url in starting_urls:
         qa_tasks = await scout_page(starting_url)
-        await run_pool(qa_tasks, starting_url, num_agents, headless, tag="exploratory_testing")
 
-async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headless: bool = False, tag: str | None = None) -> str:
-    test_id = str(uuid.uuid4())
-    start_time = time.time()
+        await convex_client.mutation("testSessions:addMessageToTestSession", {
+            "testSessionId": test_session_id,
+            "message": f"Scouted {starting_url} and found {len(qa_tasks)} tasks"
+        })
+
+        await run_pool(qa_tasks, starting_url, num_agents, headless, tag="exploratory", test_session_id=test_session_id)
+
+        await convex_client.mutation("testSessions:addMessageToTestSession", {
+            "testSessionId": test_session_id,
+            "message": f"Completed {len(qa_tasks)} exploratory tasks for {starting_url}"
+        })
     
+    await convex_client.mutation("testSessions:addMessageToTestSession", {
+        "testSessionId": test_session_id,
+        "message": f"Completed exploratory testing"
+    })
+
+async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headless: bool = False, tag: str | None = None, test_session_id: str = None) -> str:
+    start_time = time.time()
+
+    task_execution_ids = []
+
+    # Add a test execution for each qa_task
+    for task in tasks:
+        task_execution_id = await convex_client.mutation("testExecutions:createTestExecution", {
+            "testSessionId": test_session_id,
+            "name": task,
+            "prompt": task,
+            "type": tag
+        })
+        task_execution_ids.append(task_execution_id)
+
     async def run_single_agent(i: int):
         task_description = tasks[i % len(tasks)]
+
+        # Update the task execution status to running
+        await convex_client.mutation("testExecutions:updateTestExecutionStatus", {
+            "testExecutionId": task_execution_ids[i],
+            "status": "running"
+        })
         
         try:
             # browser configuration with optimizations for faster startup
@@ -143,12 +199,48 @@ async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headles
                     task=task_description,
                     llm=browser_llm,
                     browser_session=browser_session,
-                    use_vision=True
+                    use_vision=True,
+                    output_model_schema=TestExecutionResult
                 )
+
+                def on_step(state, output, step_no):
+                    # state is BrowserStateSummary
+                    if not state.screenshot:
+                        return
+
+                    # 1) Decode base64 to PNG bytes
+                    base64_bytes = base64.b64decode(state.screenshot)
+                    print(f"Saving screenshot for step {step_no}")
+
+                    # 2) Get upload URL from Convex (it's a mutation in your backend)
+                    upload_url = convex_client.mutation("testExecutions:generateUploadUrl")
+
+                    # 3) Upload bytes to Convex storage via HTTP
+                    resp = requests.post(upload_url, data=base64_bytes, headers={"Content-Type": "image/png"})
+                    resp.raise_for_status()
+                    storage_id = resp.json()["storageId"]  # returned by Convex upload endpoint
+
+                    # 4) Save screenshot reference on your test execution (mutation expects Id<'_storage'>)
+                    convex_client.mutation(
+                        "testExecutions:saveTestExecutionScreenshot",
+                        {"testExecutionId": task_execution_ids[i], "storageId": storage_id},
+                    )
+
+                agent.register_new_step_callback(on_step)
                 
                 history = await agent.run()
                 
                 result_text = str(history.final_result()) if hasattr(history, 'final_result') else str(history)
+
+                validate_results_response = TestExecutionResult.model_validate_json(result_text)
+                await convex_client.mutation("testExecutions:saveTestExecutionResults", {
+                    "testExecutionId": task_execution_ids[i],
+                    "results": {
+                        "passed": validate_results_response.is_working,
+                        "message": validate_results_response.message,
+                        "error": validate_results_response.error
+                    }
+                })
                 
                 return {
                     "agent_id": i,
@@ -192,7 +284,6 @@ async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headles
     
     # store results
     test_data = {
-        "test_id": test_id,
         "url": base_url,
         "agents": num_agents,
         "start_time": start_time,
@@ -202,9 +293,7 @@ async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headles
         "status": "completed"
     }
     
-    _test_results[test_id] = test_data
-    
-    return test_id
+    return test_data
 
 async def scout_page(base_url: str) -> list:
     """Scout agent that identifies all interactive elements on the page"""

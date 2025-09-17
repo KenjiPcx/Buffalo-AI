@@ -13,4 +13,5 @@ dependencies = [
     "aiohttp>=3.12.15",
     "convex>=0.7.0",
     "langchain-openai>=0.3.33",
+    "deepagents>=0.0.5",
 ]

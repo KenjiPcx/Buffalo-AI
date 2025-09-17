@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { action, internalMutation, mutation, query } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 
 // Create a new test execution
@@ -8,12 +8,16 @@ export const createTestExecution = internalMutation({
     testSessionId: v.id("testSessions"),
     name: v.string(),
     prompt: v.string(),
+    websiteUrl: v.optional(v.string()),
+    type: v.optional(v.union(v.literal("exploratory"), v.literal("user_flow"), v.literal("preprod_checks"))),
   },
   handler: async (ctx, args) => {
     const testExecutionId = await ctx.db.insert("testExecutions", {
       testSessionId: args.testSessionId,
       name: args.name,
       prompt: args.prompt,
+      websiteUrl: args.websiteUrl,
+      type: args.type,
       status: "pending",
     });
 
@@ -55,6 +59,41 @@ export const updateTestExecutionStatus = mutation({
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.testExecutionId, { status: args.status });
+  },
+});
+
+// Save results of a test execution
+export const saveTestExecutionResults = mutation({
+  args: { testExecutionId: v.id("testExecutions"), results: v.object({
+    passed: v.boolean(),
+    message: v.string(),
+    errorMessage: v.string()
+  }) },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.testExecutionId, { ...args.results, status: "completed" });
+  },
+});
+
+// Generate a upload URL for a screenshot
+export const generateUploadUrl = mutation({
+  handler: async (ctx) => {
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
+// Save screenshot of a test execution step
+export const saveTestExecutionScreenshot = mutation({
+  args: { testExecutionId: v.id("testExecutions"), storageId: v.id("_storage") },
+  handler: async (ctx, args) => {
+    const testExecution = await ctx.db.get(args.testExecutionId);
+    if (!testExecution) throw new Error("Test execution not found");
+    
+    if (!testExecution.screenshots) testExecution.screenshots = [];
+
+    const screenshotUrl = await ctx.storage.getUrl(args.storageId);
+    if (!screenshotUrl) throw new Error("Screenshot URL not found");
+    
+    await ctx.db.patch(args.testExecutionId, { screenshots: [...testExecution.screenshots, screenshotUrl] });
   },
 });
 
