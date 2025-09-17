@@ -195,13 +195,19 @@ export async function POST(req: Request): Promise<Response> {
             }
         };
 
-        const upstreamResponse = await fetch(`${baseUrl}/sessions/`, {
+        console.log("payload", payload);
+
+        const upstreamResponse = await fetch(`${baseUrl}/api/v1/sessions/`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify(payload),
         });
+
+        if (!upstreamResponse.ok) {
+            throw new Error("Failed to create Coral session", { cause: upstreamResponse.statusText });
+        }
 
         const contentType = upstreamResponse.headers.get("content-type") || "application/json";
         const responseText = await upstreamResponse.text();

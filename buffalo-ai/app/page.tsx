@@ -79,7 +79,7 @@ export default function HomePage() {
       })
 
       if (!res.ok) {
-        throw new Error("Failed to create Coral session")
+        throw new Error("Failed to create Coral session", { cause: res.statusText })
       }
 
       const coralSession = await res.json()
