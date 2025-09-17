@@ -3,29 +3,21 @@
 import { useParams } from "next/navigation"
 import { useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
-import { useCoralConnections } from "@/hooks/useCoralConnections"
 import { TestExecutionCard } from "@/components/test-execution-card"
+import { Id } from "@/convex/_generated/dataModel"
 
 
 export default function TestSessionPage() {
     const params = useParams()
     const sessionId = params?.id as string
 
-    // Use the custom hook for WebSocket connections
-    const {
-        coralSession,
-        activeUserInputRequest,
-        closeUserInputModal,
-        isCoralConnected,
-    } = useCoralConnections({ sessionId })
-
     // Query test executions from Convex
-    const testExecutions = useQuery(api.testExecution.getTestExecutionsBySessionExternalId, {
-        sessionExternalId: sessionId
+    const testExecutions = useQuery(api.testExecution.getTestExecutionsBySessionId, {
+        testSessionId: sessionId as Id<"testSessions">
     })
 
-    const testSession = useQuery(api.testSessions.getByExternalId, {
-        externalId: sessionId
+    const testSession = useQuery(api.testSessions.getBySessionId, {
+        sessionId: sessionId as Id<"testSessions">
     })
 
     if (!testSession) {
@@ -51,16 +43,6 @@ export default function TestSessionPage() {
                             <div>
                                 <h1 className="text-xl font-mono font-medium text-foreground">Buffalo.ai</h1>
                                 <p className="text-sm text-muted-foreground">Testing {testSession.websiteUrl}</p>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                            <div className="flex items-center gap-2">
-                                <div className={`w-2 h-2 rounded-full ${isCoralConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                                <span className="text-xs text-muted-foreground">Coral</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className={`w-2 h-2 rounded-full ${isCoralConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                                <span className="text-xs text-muted-foreground">Coral</span>
                             </div>
                         </div>
                     </div>

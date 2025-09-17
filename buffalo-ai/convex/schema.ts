@@ -29,10 +29,15 @@ export default defineSchema({
 
   // Test sessions - when we execute tests on a website
   testSessions: defineTable({
-    externalId: v.string(),
     websiteUrl: v.string(),
     uniquePageUrls: v.optional(v.array(v.string())),
-    mode: v.union(v.literal("exploratory"), v.literal("user_flow"), v.literal("all")),
+    modes: v.array(
+      v.union(
+        v.literal("exploratory"),
+        v.literal("user_flow"),
+        v.literal("preprod_checklist"),
+      ),
+    ),
     status: v.union(
       v.literal("pending"),
       v.literal("running"),
@@ -40,7 +45,8 @@ export default defineSchema({
       v.literal("failed"),
       v.literal("cancelled")
     ),
-    startedAt: v.number(),
+    email: v.string(),
+    startedAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
     results: v.optional(v.object({
       exploratory: v.optional(v.object({
@@ -59,7 +65,6 @@ export default defineSchema({
     }))
   })
     .index("by_website", ["websiteUrl", "startedAt"])
-    .index("by_external_id", ["externalId"])
     .index("by_status", ["status"])
     .index("by_started", ["startedAt"]),
 

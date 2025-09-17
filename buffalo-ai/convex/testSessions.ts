@@ -1,24 +1,30 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { Id } from "./_generated/dataModel";
 
 // Create a new test session
 export const createTestSession = mutation({
   args: {
-    externalId: v.string(),
     websiteUrl: v.string(),
     uniquePageUrls: v.optional(v.array(v.string())),
-    mode: v.union(v.literal("exploratory"), v.literal("user_flow"), v.literal("all")),
+    modes: v.array(
+      v.union(
+        v.literal("exploratory"),
+        v.literal("user_flow"),
+        v.literal("preprod_checklist"),
+      ),
+    ),
+    email: v.string(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"testSessions">> => {
     const now = Date.now();
 
     // Create the test session
     const testSessionId = await ctx.db.insert("testSessions", {
-      externalId: args.externalId,
       websiteUrl: args.websiteUrl,
       uniquePageUrls: args.uniquePageUrls,
-      mode: args.mode,
+      modes: args.modes,
+      email: args.email,
       status: "running",
       startedAt: now,
     });
@@ -27,16 +33,14 @@ export const createTestSession = mutation({
   },
 });
 
-// Fetch a session by externalId
-export const getByExternalId = query({
+// Fetch a session by sessionId
+export const getBySessionId = query({
   args: {
-    externalId: v.string(),
+    sessionId: v.id("testSessions"),
   },
   handler: async (ctx, args) => {
     const session = await ctx.db
-      .query("testSessions")
-      .withIndex("by_external_id", (q) => q.eq("externalId", args.externalId))
-      .unique();
+      .get(args.sessionId);
     return session ?? null;
   },
 });

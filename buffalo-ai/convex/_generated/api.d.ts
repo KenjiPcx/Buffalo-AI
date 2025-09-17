@@ -13,6 +13,7 @@ import type {
   FilterApi,
   FunctionReference,
 } from "convex/server";
+import type * as coralSession from "../coralSession.js";
 import type * as testExecution from "../testExecution.js";
 import type * as testSessions from "../testSessions.js";
 import type * as tests from "../tests.js";
@@ -27,6 +28,7 @@ import type * as websites from "../websites.js";
  * ```
  */
 declare const fullApi: ApiFromModules<{
+  coralSession: typeof coralSession;
   testExecution: typeof testExecution;
   testSessions: typeof testSessions;
   tests: typeof tests;

@@ -70,18 +70,12 @@ export const getTestSessionExecutions = query({
   },
 });
 
-export const getTestExecutionsBySessionExternalId = query({
-  args: { sessionExternalId: v.string() },
+export const getTestExecutionsBySessionId = query({
+  args: { testSessionId: v.id("testSessions") },
   handler: async (ctx, args) => {
-    const session = await ctx.db
-      .query("testSessions")
-      .withIndex("by_external_id", (q) => q.eq("externalId", args.sessionExternalId))
-      .unique();
-    if (!session) return [];
-    
     return await ctx.db
       .query("testExecutions")
-      .withIndex("by_testSession", (q) => q.eq("testSessionId", session._id))
+      .withIndex("by_testSession", (q) => q.eq("testSessionId", args.testSessionId))
       .order("asc")
       .collect();
   },
