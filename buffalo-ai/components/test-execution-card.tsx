@@ -25,6 +25,8 @@ interface TestExecutionCardProps {
 }
 
 export function TestExecutionCard({ execution }: TestExecutionCardProps) {
+    const isError = () => execution.status === "failed" || Boolean(execution.errorMessage)
+
     const getStatusIcon = () => {
         switch (execution.status) {
             case "pending":
@@ -32,11 +34,9 @@ export function TestExecutionCard({ execution }: TestExecutionCardProps) {
             case "running":
                 return <Play className="w-4 h-4 animate-pulse" />
             case "completed":
-                return execution.passed ? (
-                    <CheckCircle className="w-4 h-4 text-green-500" />
-                ) : (
-                    <XCircle className="w-4 h-4 text-red-500" />
-                )
+                return isError()
+                    ? <XCircle className="w-4 h-4 text-red-500" />
+                    : <CheckCircle className="w-4 h-4 text-green-500" />
             case "failed":
                 return <XCircle className="w-4 h-4 text-red-500" />
             case "skipped":
@@ -53,9 +53,9 @@ export function TestExecutionCard({ execution }: TestExecutionCardProps) {
             case "running":
                 return "bg-blue-100 text-blue-800"
             case "completed":
-                return execution.passed
-                    ? "bg-green-100 text-green-800"
-                    : "bg-red-100 text-red-800"
+                return isError()
+                    ? "bg-red-100 text-red-800"
+                    : "bg-green-100 text-green-800"
             case "failed":
                 return "bg-red-100 text-red-800"
             case "skipped":

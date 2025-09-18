@@ -15,6 +15,7 @@ export const createTestSession = mutation({
       ),
     ),
     email: v.string(),
+    credentials: v.optional(v.record(v.string(), v.string())),
   },
   handler: async (ctx, args): Promise<Id<"testSessions">> => {
     const now = Date.now();
@@ -25,6 +26,7 @@ export const createTestSession = mutation({
       uniquePageUrls: args.uniquePageUrls,
       modes: args.modes,
       email: args.email,
+      credentials: args.credentials,
       status: "running",
       startedAt: now,
       messages: [],

@@ -1,5 +1,5 @@
 from typing import Literal
-from qa_util import run_exploratory_testing, run_prod_checks, run_user_flow_testing
+from qa_util import run_exploratory_testing, run_prod_checks, run_user_flow_testing, summarize_test_session
 from langchain_core.tools import tool
 from configs import convex_client
 
@@ -45,28 +45,7 @@ async def analyze_test_session(test_id: str) -> dict:
         dict: Complete test results with detailed findings
     """
     try:
-        summary = await summarize_bug_reports(test_id)
-        
-        if "error" in summary:
-            return summary
-        
-        # Get test data to access duration
-        from qa_util import _test_results
-        test_data = _test_results.get(test_id, {})
-        
-        # Add duration to the summary
-        duration_seconds = test_data.get('duration', 0)
-        if duration_seconds > 0:
-            summary['duration_seconds'] = duration_seconds
-            if duration_seconds < 60:
-                summary['duration_formatted'] = f"{duration_seconds:.0f}s"
-            else:
-                minutes = int(duration_seconds // 60)
-                seconds = int(duration_seconds % 60)
-                summary['duration_formatted'] = f"{minutes}m {seconds}s"
-        else:
-            summary['duration_formatted'] = "unknown"
-        
+        summary = await summarize_test_session(test_id)
         return summary
         
     except Exception as e:

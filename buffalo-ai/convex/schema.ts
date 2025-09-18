@@ -39,6 +39,9 @@ export default defineSchema({
       ),
     ),
     messages: v.optional(v.array(v.string())),
+    // Optional app credentials for testing authenticated areas
+    // Stored as a record of key -> value (env-style)
+    credentials: v.optional(v.record(v.string(), v.string())),
     status: v.union(
       v.literal("pending"),
       v.literal("running"),
@@ -85,7 +88,7 @@ export default defineSchema({
     type: v.optional(v.union(v.literal("exploratory"), v.literal("user_flow"), v.literal("preprod_checks"))),
     passed: v.optional(v.boolean()),
     message: v.optional(v.string()), // Result commentary from the agent
-    errorMessage: v.optional(v.string()),
+    errorMessage: v.optional(v.union(v.string(), v.null())),
     screenshots: v.optional(v.array(v.string())), // URL of screenshot
     executionTime: v.optional(v.number()), // Time in milliseconds
     startedAt: v.optional(v.number()),
@@ -93,4 +96,23 @@ export default defineSchema({
   })
     .index("by_testSession", ["testSessionId"])
     .index("by_status", ["status"]),
+
+  testReports: defineTable({
+    testSessionId: v.id("testSessions"),
+    summary: v.string(),
+    issues: v.array(
+      v.object({
+        severity: v.union(
+          v.literal("High"),
+          v.literal("Medium"),
+          v.literal("Low"),
+        ),
+        risk: v.string(),
+        details: v.string(),
+        testExecutionId: v.id("testExecutions"),
+        advice: v.string(),
+      }),
+    ),
+  })
+    .index("by_testSessionId", ["testSessionId"]),
 });

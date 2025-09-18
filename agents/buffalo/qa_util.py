@@ -24,33 +24,58 @@ Notes:
 4. Stop when bug found or task complete
 """
 
+import logging
 import base64
 import time
 import asyncio
 import json
-from typing import List, Optional
-from browser_use import Agent, BrowserProfile, BrowserSession
+from typing import List, Optional, Literal
+from browser_use import Agent, BrowserProfile, BrowserSession, llm
+from browser_use.browser.views import BrowserStateSummary
 from browser_use.llm.messages import UserMessage
 from pydantic import BaseModel, Field
 import requests
 
 from configs import convex_client, get_screen_dimensions, model, browser_llm, browser_profile
+logger = logging.getLogger(__name__)
 
 class TestExecutionResult(BaseModel):
-    is_working: bool = Field(description="Whether the test execution is working as expected")
-    message: str = Field(description="A message explaining the result")
-    error: Optional[str] = Field(description="An error message if the test execution failed")
+    is_working: bool
+    message: str
+    error: Optional[str]
+
+# ---- Logging helpers ----
+def _truncate(text: str, max_len: int = 2000) -> str:
+    try:
+        if text is None:
+            return ""
+        s = str(text)
+        return s if len(s) <= max_len else s[:max_len] + "… [truncated]"
+    except Exception:
+        return "[unserializable]"
+
+def _extract_final_result_text(history) -> str:
+    try:
+        final_attr = getattr(history, "final_result", None)
+        if callable(final_attr):
+            return str(final_attr())
+        if final_attr is not None:
+            return str(final_attr)
+        return str(history)
+    except Exception as e:
+        logger.exception("Failed extracting final result from history: %s", e)
+        return str(history)
 
 async def run_prod_checks(prod_checks: List[str], num_agents: int = 3, headless: bool = False, test_session_id: str = None):
     """
     QA check prod checks orchestrator, process tasks in batches
     """
-    await convex_client.mutation("testSessions:addMessageToTestSession", {
+    convex_client.mutation("testSessions:addMessageToTestSession", {
         "testSessionId": test_session_id,
         "message": f"Running {len(prod_checks)} prod checks"
     })
     await run_pool(prod_checks, num_agents, headless, tag="preprod_checks", test_session_id=test_session_id)
-    await convex_client.mutation("testSessions:addMessageToTestSession", {
+    convex_client.mutation("testSessions:addMessageToTestSession", {
         "testSessionId": test_session_id,
         "message": f"Completed {len(prod_checks)} prod checks"
     })
@@ -59,12 +84,12 @@ async def run_user_flow_testing(user_flow_tasks: List[str], num_agents: int = 3,
     """
     QA check user flow tasks orchestrator, process tasks in batches
     """
-    await convex_client.mutation("testSessions:addMessageToTestSession", {
+    convex_client.mutation("testSessions:addMessageToTestSession", {
         "testSessionId": test_session_id,
         "message": f"Running {len(user_flow_tasks)} user flow tasks"
     })
     await run_pool(user_flow_tasks, num_agents, headless, tag="user_flow", test_session_id=test_session_id)
-    await convex_client.mutation("testSessions:addMessageToTestSession", {
+    convex_client.mutation("testSessions:addMessageToTestSession", {
         "testSessionId": test_session_id,
         "message": f"Completed {len(user_flow_tasks)} user flow tasks"
     })
@@ -79,7 +104,7 @@ async def run_exploratory_testing(starting_urls: List[str], num_agents: int = 3,
     Args:
         starting_urls: List of starting URLs to test, these should be the starting points within a website to test
     """
-    await convex_client.mutation("testSessions:addMessageToTestSession", {
+    convex_client.mutation("testSessions:addMessageToTestSession", {
             "testSessionId": test_session_id,
             "message": f"Crawled {len(starting_urls)} starting URLs"
         })
@@ -87,19 +112,19 @@ async def run_exploratory_testing(starting_urls: List[str], num_agents: int = 3,
     for starting_url in starting_urls:
         qa_tasks = await scout_page(starting_url)
 
-        await convex_client.mutation("testSessions:addMessageToTestSession", {
+        convex_client.mutation("testSessions:addMessageToTestSession", {
             "testSessionId": test_session_id,
             "message": f"Scouted {starting_url} and found {len(qa_tasks)} tasks"
         })
 
         await run_pool(qa_tasks, starting_url, num_agents, headless, tag="exploratory", test_session_id=test_session_id)
 
-        await convex_client.mutation("testSessions:addMessageToTestSession", {
+        convex_client.mutation("testSessions:addMessageToTestSession", {
             "testSessionId": test_session_id,
             "message": f"Completed {len(qa_tasks)} exploratory tasks for {starting_url}"
         })
     
-    await convex_client.mutation("testSessions:addMessageToTestSession", {
+    convex_client.mutation("testSessions:addMessageToTestSession", {
         "testSessionId": test_session_id,
         "message": f"Completed exploratory testing"
     })
@@ -111,19 +136,21 @@ async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headles
 
     # Add a test execution for each qa_task
     for task in tasks:
-        task_execution_id = await convex_client.mutation("testExecutions:createTestExecution", {
+        task_execution_id = convex_client.mutation("testExecutions:createTestExecution", {
             "testSessionId": test_session_id,
             "name": task,
             "prompt": task,
-            "type": tag
+            "type": tag,
+            "websiteUrl": base_url
         })
         task_execution_ids.append(task_execution_id)
+        logger.debug("Created test execution id=%s for task='%s'", task_execution_id, task)
 
     async def run_single_agent(i: int):
-        task_description = tasks[i % len(tasks)]
+        task_description = tasks[i]
 
         # Update the task execution status to running
-        await convex_client.mutation("testExecutions:updateTestExecutionStatus", {
+        convex_client.mutation("testExecutions:updateTestExecutionStatus", {
             "testExecutionId": task_execution_ids[i],
             "status": "running"
         })
@@ -180,6 +207,7 @@ async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headles
                 }
                 # Note: window_position removed due to API incompatibility - expects width/height but needs x/y
             
+            logger.debug("Agent %d configuring BrowserProfile. headless=%s, args=%s, window_config=%s", i, headless, browser_args, window_config)
             browser_profile = BrowserProfile(
                 headless=headless,
                 disable_security=True,
@@ -193,17 +221,10 @@ async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headles
             )
             
             browser_session = BrowserSession(browser_profile=browser_profile)
+            logger.debug("Agent %d BrowserSession created", i)
             
             try:
-                agent = Agent(
-                    task=task_description,
-                    llm=browser_llm,
-                    browser_session=browser_session,
-                    use_vision=True,
-                    output_model_schema=TestExecutionResult
-                )
-
-                def on_step(state, output, step_no):
+                def on_step(state: BrowserStateSummary, output, step_no):
                     # state is BrowserStateSummary
                     if not state.screenshot:
                         return
@@ -226,19 +247,32 @@ async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headles
                         {"testExecutionId": task_execution_ids[i], "storageId": storage_id},
                     )
 
-                agent.register_new_step_callback(on_step)
-                
+                agent = Agent(
+                    task=task_description,
+                    llm=browser_llm,
+                    browser_session=browser_session,
+                    use_vision=True,
+                    output_model_schema=TestExecutionResult,
+                    register_new_step_callback=on_step
+                )
+                logger.info("Agent %d starting run for task_execution_id=%s", i, task_execution_ids[i])
+                t0 = time.time()
+
                 history = await agent.run()
+                elapsed = time.time() - t0
+                logger.info("Agent %d finished run in %.2fs", i, elapsed)
+                logger.debug("Agent %d history (truncated): %s", i, _truncate(history))
                 
-                result_text = str(history.final_result()) if hasattr(history, 'final_result') else str(history)
+                result_text = _extract_final_result_text(history)
+                logger.debug("Agent %d final_result (truncated): %s", i, _truncate(result_text))
 
                 validate_results_response = TestExecutionResult.model_validate_json(result_text)
-                await convex_client.mutation("testExecutions:saveTestExecutionResults", {
+                convex_client.mutation("testExecutions:saveTestExecutionResults", {
                     "testExecutionId": task_execution_ids[i],
                     "results": {
                         "passed": validate_results_response.is_working,
                         "message": validate_results_response.message,
-                        "error": validate_results_response.error
+                        "errorMessage": validate_results_response.error
                     }
                 })
                 
@@ -253,10 +287,12 @@ async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headles
                 # Properly close browser session to prevent lingering processes
                 try:
                     await browser_session.aclose()
+                    logger.debug("Agent %d BrowserSession closed", i)
                 except Exception:
-                    pass
+                    logger.exception("Agent %d error closing BrowserSession", i)
             
         except Exception as e:
+            logger.exception("Error running agent %d: %s", i, e)
             return {
                 "agent_id": i,
                 "task": task_description,
@@ -272,10 +308,23 @@ async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headles
         async with semaphore:
             return await run_single_agent(i)
     
+    logger.info("Running %d tasks with up to %d concurrent agents for base_url=%s (headless=%s, tag=%s)", len(tasks), num_agents, base_url, headless, tag)
     results = await asyncio.gather(
-        *[run_agent_with_semaphore(i) for i in range(num_agents)], 
+        *[run_agent_with_semaphore(i) for i in range(len(tasks))], 
         return_exceptions=True
     )
+    success_count = 0
+    error_count = 0
+    for r in results:
+        if isinstance(r, Exception):
+            error_count += 1
+            logger.exception("Agent raised exception: %s", r)
+        elif isinstance(r, dict) and r.get("status") == "error":
+            error_count += 1
+            logger.error("Agent reported error: %s", r.get("error"))
+        else:
+            success_count += 1
+    logger.info("Agents completed: success=%d, error=%d", success_count, error_count)
     
     end_time = time.time()
     
@@ -292,12 +341,13 @@ async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headles
         "results": [r for r in results if not isinstance(r, Exception)],
         "status": "completed"
     }
-    
+    logger.info("run_pool completed for %s in %.2fs", base_url, test_data["duration"])
     return test_data
 
 async def scout_page(base_url: str) -> list:
     """Scout agent that identifies all interactive elements on the page"""
     try:
+        logger.info("Scout starting for base_url=%s", base_url)
         browser_profile = BrowserProfile(
             headless=True,
             disable_security=True,
@@ -319,6 +369,7 @@ async def scout_page(base_url: str) -> list:
         )
         
         browser_session = BrowserSession(browser_profile=browser_profile)
+        logger.debug("Scout BrowserSession created")
         
         try:
             scout_task = f"""Navigate to {base_url} using the go_to_url action, then identify ALL interactive elements on the page. Do NOT click anything, just observe and catalog what's available. List buttons, links, forms, input fields, menus, dropdowns, and any other clickable elements you can see. Provide a comprehensive inventory."""
@@ -329,16 +380,21 @@ async def scout_page(base_url: str) -> list:
                 browser_session=browser_session,
                 use_vision=True
             )
-            
+            logger.info("Scout agent starting run")
+            t0 = time.time()
             history = await agent.run()
+            elapsed = time.time() - t0
+            logger.info("Scout agent finished run in %.2fs", elapsed)
         finally:
             # Properly close scout browser session to prevent lingering processes
             try:
                 await browser_session.aclose()
+                logger.debug("Scout BrowserSession closed")
             except Exception:
-                pass
+                logger.exception("Scout error closing BrowserSession")
         
-        scout_result = str(history.final_result()) if hasattr(history, 'final_result') else str(history)
+        scout_result = _extract_final_result_text(history)
+        logger.debug("Scout final_result (truncated): %s", _truncate(scout_result))
         
         # partition elements with llm
         partition_prompt = f"""
@@ -361,7 +417,9 @@ Make each task very specific about which exact elements to test. ALWAYS start ea
         # Format prompt as proper message for the LLM  
         from browser_use.llm.messages import UserMessage
         partition_messages = [UserMessage(content=partition_prompt)]
+        logger.info("Scout partitioning elements via LLM")
         partition_response = await browser_llm.ainvoke(partition_messages)
+        logger.debug("Partition LLM raw response (truncated): %s", _truncate(partition_response))
         
         # parse response
         import re
@@ -374,9 +432,11 @@ Make each task very specific about which exact elements to test. ALWAYS start ea
             response_text = str(partition_response.text)
         else:
             response_text = str(partition_response)
+        logger.debug("Partition response text (truncated): %s", _truncate(response_text))
         json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
         if json_match:
             element_tasks = json.loads(json_match.group())
+            logger.info("Scout partitioned %d element tasks", len(element_tasks))
         else:
             # fallback tasks
             element_tasks = [
@@ -387,11 +447,13 @@ Make each task very specific about which exact elements to test. ALWAYS start ea
                 f"Test sidebar or secondary navigation in {base_url}",
                 f"Test any remaining interactive elements in {base_url}"
             ]
+            logger.warning("Scout partition JSON parse failed; using fallback tasks (%d)", len(element_tasks))
         
         return element_tasks
         
     except Exception as e:
         # fallback tasks if scouting fails
+        logger.exception("Scout failed for base_url=%s: %s", base_url, e)
         return [
             f"Test navigation elements in the header area of {base_url}",
             f"Test main content links and buttons in {base_url}",
@@ -400,3 +462,47 @@ Make each task very specific about which exact elements to test. ALWAYS start ea
             f"Test sidebar or secondary navigation in {base_url}",
             f"Test any remaining interactive elements in {base_url}"
         ]
+
+class Issue(BaseModel):
+    """Represents a single issue found during testing."""
+    severity: Literal["High", "Medium", "Low"] = Field(description="The severity of the issue.")
+    risk: str = Field(description="What is the risk of this issue?")
+    details: str = Field(description="Details about the issue that was found.")
+    testExecutionId: str = Field(description="The ID of the test execution where this issue was found.")
+    advice: str = Field(description="Advice on how to fix the issue.")
+
+class ReportGenerator(BaseModel):
+    """Always use this tool to structure your response to the user."""
+    summary: str = Field(description="A summary of the test session.")
+    issues: List[Issue] = Field(description="A list of issues found during the test session.")
+
+
+async def summarize_test_session(test_session_id: str) -> str:
+    """Summarize a test session"""
+    test_executions = convex_client.query("testExecutions:getTestExecutionsBySessionId", {"testSessionId": test_session_id})
+
+    prompt = f"""
+    You are a QA engineer summarizing a test session.
+    Based on the following test executions, generate a report.
+    The report should include a summary and a list of issues.
+    For each issue, provide the severity, risk, details, the test execution ID, and advice on how to fix it.
+    Prioritize failed tests and tests with error messages.
+
+    Test Executions:
+    {test_executions}
+    """
+    response: ReportGenerator = await model.with_structured_output(ReportGenerator).ainvoke(prompt)
+    
+    # Convert Pydantic model to dictionary
+    report_data = response.model_dump()
+    
+    convex_client.mutation(
+        "testReports:createReport",
+        {
+            "testSessionId": test_session_id,
+            "summary": report_data["summary"],
+            "issues": report_data["issues"],
+        },
+    )
+    
+    return "Report generated and saved."

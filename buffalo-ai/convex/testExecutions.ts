@@ -3,7 +3,7 @@ import { action, internalMutation, mutation, query } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 
 // Create a new test execution
-export const createTestExecution = internalMutation({
+export const createTestExecution = mutation({
   args: {
     testSessionId: v.id("testSessions"),
     name: v.string(),
@@ -67,7 +67,7 @@ export const saveTestExecutionResults = mutation({
   args: { testExecutionId: v.id("testExecutions"), results: v.object({
     passed: v.boolean(),
     message: v.string(),
-    errorMessage: v.string()
+    errorMessage: v.optional(v.union(v.string(), v.null()))
   }) },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.testExecutionId, { ...args.results, status: "completed" });

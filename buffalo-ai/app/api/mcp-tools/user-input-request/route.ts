@@ -26,12 +26,20 @@ export async function GET(req: NextRequest): Promise<Response> {
             return NextResponse.json("Test session not found", { status: 404 });
         }
 
+        const cred = testSession.credentials as Record<string, string> | undefined;
+        const credentialText = cred
+            ? `\nLogin credentials for authenticated areas (use only if needed):\n${Object.entries(cred)
+                .map(([k, v]) => `- ${k}=${v}`)
+                .join("\n")}`
+            : "";
+
         const prompt = dedent`
             Please help me test the user's website at ${websiteUrl}.
             The user has asked you to test the website with the following modes: ${testSession.modes.join(", ")}.
             Send the user an email of the test report when done at ${email}.
             Here is the test session id which you will need to give to the Buffalo agent to save test results: ${testSessionId}
             Please also let the buffalo agent know the modes of the test session: ${testSession.modes.join(", ")}.
+            ${credentialText}
         `;
         return NextResponse.json(prompt, { status: 200 });
     } catch (error) {

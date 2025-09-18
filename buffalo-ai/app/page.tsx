@@ -58,7 +58,8 @@ export default function HomePage() {
   const handleStartTest = async (
     url: string,
     email: string,
-    modes: Array<"exploratory" | "user_flow" | "preprod_checklist">
+    modes: Array<"exploratory" | "user_flow" | "preprod_checklist">,
+    credentials?: Record<string, string>
   ) => {
     try {
       // Create test session in Convex
@@ -66,6 +67,7 @@ export default function HomePage() {
         websiteUrl: url,
         modes,
         email: email,
+        credentials,
       })
 
       // Create Coral session by calling our endpoint

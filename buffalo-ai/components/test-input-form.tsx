@@ -8,16 +8,24 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 type TestMode = "exploratory" | "user_flow" | "preprod_checklist"
 
 interface TestInputFormProps {
-  onStartTest: (url: string, email: string, modes: Array<TestMode>) => void
+  onStartTest: (
+    url: string,
+    email: string,
+    modes: Array<TestMode>,
+    credentials?: Record<string, string>
+  ) => void
 }
 
 export function TestInputForm({ onStartTest }: TestInputFormProps) {
   const [url, setUrl] = useState("")
   const [email, setEmail] = useState("")
+  const [credsOpen, setCredsOpen] = useState(false)
+  const [credRows, setCredRows] = useState<Array<{ id: string; key: string; value: string }>>([])
   const [isLoading, setIsLoading] = useState(false)
   const [selectedModes, setSelectedModes] = useState<Array<TestMode>>([
     "exploratory",
@@ -65,7 +73,13 @@ export function TestInputForm({ onStartTest }: TestInputFormProps) {
     setIsLoading(true)
     // Simulate brief loading
     await new Promise((resolve) => setTimeout(resolve, 800))
-    onStartTest(url, email, selectedModes)
+    const trimmed = credRows
+      .map(r => ({ key: r.key.trim(), value: r.value }))
+      .filter(r => r.key.length > 0)
+    const credentials = trimmed.length > 0
+      ? trimmed.reduce<Record<string, string>>((acc, { key, value }) => { acc[key] = value; return acc }, {})
+      : undefined
+    onStartTest(url, email, selectedModes, credentials)
     setIsLoading(false)
   }
 
@@ -111,6 +125,25 @@ export function TestInputForm({ onStartTest }: TestInputFormProps) {
               disabled={isLoading}
             />
             {url && !isValidUrl(url) && <p className="text-xs font-mono text-destructive">Please enter a valid URL</p>}
+            <div className="pt-1">
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge
+                      role="button"
+                      onClick={() => setCredsOpen(true)}
+                      className="cursor-pointer select-none px-2 py-0.5 text-[10px]"
+                      variant="outline"
+                    >
+                      credentials
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs font-mono text-xs">
+                    Supply only if the site requires login. We recommend a dummy account.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -130,6 +163,72 @@ export function TestInputForm({ onStartTest }: TestInputFormProps) {
               <p className="text-xs font-mono text-destructive">Please enter a valid email address</p>
             )}
           </div>
+
+
+          {/* Credentials Modal */}
+          <Dialog open={credsOpen} onOpenChange={setCredsOpen}>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Credentials</DialogTitle>
+                <DialogDescription>
+                  Provide env-style key/value pairs required to log in (e.g., USERNAME, PASSWORD). Use a dummy account.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-3">
+                {credRows.length === 0 && (
+                  <p className="text-xs text-muted-foreground font-mono">No credentials added yet.</p>
+                )}
+                {credRows.map((row, idx) => (
+                  <div key={row.id} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+                    <Input
+                      value={row.key}
+                      onChange={(e) => setCredRows(prev => prev.map(r => r.id === row.id ? { ...r, key: e.target.value } : r))}
+                      placeholder="KEY"
+                      className="font-mono text-sm"
+                    />
+                    <Input
+                      value={row.value}
+                      onChange={(e) => setCredRows(prev => prev.map(r => r.id === row.id ? { ...r, value: e.target.value } : r))}
+                      placeholder="value"
+                      className="font-mono text-sm"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setCredRows(prev => prev.filter(r => r.id !== row.id))}
+                      className="px-2 py-1 h-8 text-xs"
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                ))}
+                <div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setCredRows(prev => [...prev, { id: `${Date.now()}-${Math.random()}`, key: "", value: "" }])}
+                    className="h-8 text-xs"
+                  >
+                    Add row
+                  </Button>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setCredRows([])}
+                >
+                  Clear
+                </Button>
+                <Button type="button" onClick={() => setCredsOpen(false)}>
+                  Done
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           <div className="space-y-2">
             <Label className="text-sm font-mono text-foreground">Test Modes</Label>
