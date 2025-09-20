@@ -4,3 +4,6 @@
 [submodule "coral-server"]
 	path = coral-server
 	url = https://github.com/Coral-Protocol/coral-server.git
+[submodule "coral-studio"]
+	path = coral-studio
+	url = https://github.com/Coral-Protocol/coral-studio.git
