@@ -8,6 +8,9 @@ import { TestInputForm } from "@/components/test-input-form"
 import { TestStreamingInterface } from "@/components/test-streaming-interface"
 import { ResultsDashboard } from "@/components/results-dashboard"
 import { useRouter } from "next/navigation"
+import { SignedIn, SignedOut, SignIn, UserButton, useUser } from "@clerk/nextjs"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { useEffect } from "react"
 
 export type TestSession = {
   id: string
@@ -54,6 +57,15 @@ export type Issue = {
 export default function HomePage() {
   const router = useRouter()
   const createTestSession = useMutation(api.testSessions.createTestSession)
+  const { isSignedIn } = useUser()
+  const [signInOpen, setSignInOpen] = useState(false)
+  const [pendingSubmission, setPendingSubmission] = useState<{
+    url: string
+    email: string
+    modes: Array<"exploratory" | "user_flow" | "preprod_checklist">
+    credentials?: Record<string, string>
+  } | null>(null)
+  const STORAGE_PENDING = "buffalo:pendingSubmission"
 
   const handleStartTest = async (
     url: string,
@@ -62,6 +74,13 @@ export default function HomePage() {
     credentials?: Record<string, string>
   ) => {
     try {
+      if (!isSignedIn) {
+        const pending = { url, email, modes, credentials }
+        setPendingSubmission(pending)
+        try { if (typeof window !== "undefined") window.localStorage.setItem(STORAGE_PENDING, JSON.stringify(pending)) } catch {}
+        setSignInOpen(true)
+        return
+      }
       // Create test session in Convex
       const testSessionId = await createTestSession({
         websiteUrl: url,
@@ -95,6 +114,28 @@ export default function HomePage() {
     }
   }
 
+  // Auto-continue after successful sign-in
+  useEffect(() => {
+    // Hydrate pending submission
+    if (!pendingSubmission && typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage.getItem(STORAGE_PENDING)
+        if (raw) setPendingSubmission(JSON.parse(raw))
+      } catch {}
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (isSignedIn && (signInOpen || pendingSubmission)) {
+      setSignInOpen(false)
+      const data = pendingSubmission
+      setPendingSubmission(null)
+      try { if (typeof window !== "undefined") window.localStorage.removeItem(STORAGE_PENDING) } catch {}
+      if (data) void handleStartTest(data.url, data.email, data.modes, data.credentials)
+    }
+  }, [isSignedIn])
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border/40">
@@ -106,6 +147,19 @@ export default function HomePage() {
               </div>
               <h1 className="text-xl font-mono font-medium text-foreground">Buffalo.ai</h1>
             </div>
+            <div className="flex items-center">
+              <SignedIn>
+                <UserButton appearance={{ elements: { avatarBox: "w-7 h-7" } }} />
+              </SignedIn>
+              <SignedOut>
+                <button
+                  onClick={() => setSignInOpen(true)}
+                  className="text-sm text-muted-foreground hover:text-foreground"
+                >
+                  Sign in
+                </button>
+              </SignedOut>
+            </div>
           </div>
         </div>
       </header>
@@ -113,6 +167,21 @@ export default function HomePage() {
       <main className="container mx-auto px-6 py-8">
         <TestInputForm onStartTest={handleStartTest} />
       </main>
+
+      {/* Sign-in Modal */}
+      <Dialog open={signInOpen} onOpenChange={setSignInOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Sign in</DialogTitle>
+            <DialogDescription>
+              Please sign in to start testing. Your form entries are preserved.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="pt-2">
+            <SignIn routing="hash" signUpForceRedirectUrl="/" afterSignInUrl="/" />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

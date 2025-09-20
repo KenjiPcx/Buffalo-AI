@@ -11,15 +11,17 @@ export const upsertTest = mutation({
     websiteId: v.optional(v.id("websites")),
     category: v.optional(v.string()),
     order: v.optional(v.number()),
+    ownerId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const now = Date.now();
+    const identity = await ctx.auth.getUserIdentity();
+    const ownerId = args.ownerId ?? identity?.subject ?? undefined;
 
     // For website-specific tests, check if it already exists
     if (args.type === "website-specific" && args.websiteId) {
       const existing = await ctx.db
         .query("tests")
-        .withIndex("by_website", (q) => q.eq("websiteId", args.websiteId))
+        .withIndex("by_owner_and_website", (q) => q.eq("ownerId", ownerId).eq("websiteId", args.websiteId))
         .filter((q) => q.eq(q.field("name"), args.name))
         .first();
 
@@ -27,6 +29,7 @@ export const upsertTest = mutation({
         await ctx.db.patch(existing._id, {
           prompt: args.prompt,
           category: args.category,
+          ownerId,
         });
         return existing._id;
       }
@@ -39,6 +42,7 @@ export const upsertTest = mutation({
       type: args.type,
       websiteId: args.websiteId,
       category: args.category,
+      ownerId,
     });
 
     return testId;
@@ -49,17 +53,19 @@ export const upsertTest = mutation({
 export const getTestsForWebsiteUrl = query({
   args: { websiteUrl: v.string() },
   handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    const ownerId = identity?.subject ?? undefined;
     const website = await ctx.db
       .query("websites")
       .withIndex("by_url", (q) => q.eq("url", args.websiteUrl))
       .first();
 
     let websiteTests: Doc<"tests">[] = [];
-    if (website) {
+    if (website && ownerId) {
       // Get website-specific tests
       websiteTests = await ctx.db
         .query("tests")
-        .withIndex("by_website", (q) => q.eq("websiteId", website._id))
+        .withIndex("by_owner_and_website", (q) => q.eq("ownerId", ownerId).eq("websiteId", website._id))
         .collect();
     }
 
@@ -74,6 +80,18 @@ export const getTestsForWebsiteUrl = query({
       checklist: checklistTests,
       total: websiteTests.length + checklistTests.length,
     };
+  },
+});
+export const deleteTest = mutation({
+  args: { testId: v.id("tests") },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    const ownerId = identity?.subject ?? undefined;
+    const test = await ctx.db.get(args.testId);
+    if (!test) throw new Error("Test not found");
+    if (test.ownerId && ownerId && test.ownerId !== ownerId) throw new Error("Not authorized");
+    await ctx.db.delete(args.testId);
+    return null;
   },
 });
 

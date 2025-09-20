@@ -22,10 +22,14 @@ export default defineSchema({
     ),
     websiteId: v.optional(v.id("websites")), // Only set for website-specific tests
     category: v.optional(v.string()), // e.g., "security", "performance", "seo", "accessibility"
+    // Optional: owner of the test for user-specific saved tests
+    ownerId: v.optional(v.string()),
   })
     .index("by_website", ["websiteId"])
     .index("by_type", ["type"])
-    .index("by_category", ["category"]),
+    .index("by_category", ["category"]) 
+    // Query user-specific website tests by ownerId, then websiteId
+    .index("by_owner_and_website", ["ownerId", "websiteId"]),
 
   // Test sessions - when we execute tests on a website
   testSessions: defineTable({

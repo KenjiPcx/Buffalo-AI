@@ -1,43 +1,6 @@
-type CreateCoralSessionBody = {
-    privacyKey: string;
-    applicationId: string;
-    agentGraph: {
-        agents: Record<
-            string,
-            {
-                options: Record<string, string>;
-                type: string;
-                agentType: string;
-                tools: Array<string>;
-            }
-        >;
-        links: Array<Array<string>>;
-        tools: Record<
-            string,
-            {
-                transport: {
-                    type: string;
-                    url: string;
-                };
-                toolSchema: {
-                    name: string;
-                    description: string;
-                    inputSchema: {
-                        type: string;
-                        properties: Record<
-                            string,
-                            {
-                                type: string;
-                                description?: string;
-                            }
-                        >;
-                        required?: Array<string>;
-                    };
-                };
-            }
-        >;
-    };
-};
+import { components } from "@/lib/coral/api";
+
+type CreateSessionPayload = components["schemas"]["SessionRequest"];
 
 type CoralSessionRequest = {
     testSessionId: string;
@@ -53,14 +16,26 @@ export async function POST(req: Request): Promise<Response> {
         if (!prodBaseUrl) {
             throw new Error("Missing PROD_BASE_URL. Provide via env.");
         }
-        console.log("prodBaseUrl", prodBaseUrl);
+        const prodBaseWithScheme = /^(https?:)?\/\//.test(prodBaseUrl) ? prodBaseUrl : `http://${prodBaseUrl}`;
+        const prodBase = prodBaseWithScheme.endsWith("/") ? prodBaseWithScheme.slice(0, -1) : prodBaseWithScheme;
+        console.log("prodBase", prodBase);
         
         // Coral Application
         const baseUrlEnv = process.env.CORAL_BASE_URL;
         if (!baseUrlEnv) {
             throw new Error("Missing CORAL_BASE_URL. Provide via env.");
         }
-        const baseUrl = baseUrlEnv.endsWith("/") ? baseUrlEnv.slice(0, -1) : baseUrlEnv;
+        const baseUrlWithScheme = /^(https?:)?\/\//.test(baseUrlEnv) ? baseUrlEnv : `http://${baseUrlEnv}`;
+        const baseUrl = baseUrlWithScheme.endsWith("/") ? baseUrlWithScheme.slice(0, -1) : baseUrlWithScheme;
+        console.log("baseUrl", baseUrl);
+
+        // Construct URLs used below and log them for debugging
+        const respondUrl = `${prodBase}/api/mcp-tools/user-input-respond?testSessionId=${incoming.testSessionId}&websiteUrl=${incoming.websiteUrl}&email=${incoming.email}`;
+        const requestUrl = `${prodBase}/api/mcp-tools/user-input-request?testSessionId=${incoming.testSessionId}&websiteUrl=${incoming.websiteUrl}&email=${incoming.email}`;
+        const sessionUrl = `${baseUrl}/api/v1/sessions`;
+        console.log("respondUrl", respondUrl);
+        console.log("requestUrl", requestUrl);
+        console.log("sessionUrl", sessionUrl);
         const privacyKey = process.env.CORAL_PRIVACY_KEY;
         const applicationId = process.env.CORAL_APPLICATION_ID;
         if (!privacyKey || !applicationId) {
@@ -96,52 +71,94 @@ export async function POST(req: Request): Promise<Response> {
             throw new Error("Missing FIRECRAWL_API_KEY. Provide via env.");
         }
 
-        const payload: CreateCoralSessionBody = {
+        const customTools: Record<string, components["schemas"]["CustomTool"]> = {
+            "user-input-respond": {
+                "transport": {
+                    "type": "http",
+                    "url": respondUrl
+                },
+                "toolSchema": {
+                    "name": "answer-question",
+                    "description": "Answer the last question you requested from the user. You can only respond once, and will have to request more input later.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": { "response": {} },
+                        "required": [
+                            "response"
+                        ]
+                    }
+                }
+            },
+            "user-input-request": {
+                "transport": {
+                    "type": "http",
+                    "url": requestUrl
+                },
+                "toolSchema": {
+                    "name": "request-question",
+                    "description": "Request a question from the user. Hangs until input is received.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": { "message": {} }
+                    }
+                }
+            }
+        };
+
+        const payload: CreateSessionPayload = {
             privacyKey,
             applicationId,
-            agentGraph: {
-                "agents": {
-                    "interface": {
-                        "options": {
-                            "MODEL_API_KEY": MODEL_API_KEY
+            agentGraphRequest: {
+                "agents": [
+                    {
+                        id: { name: "interface", version: "0.0.1" },
+                        name: "interface",
+                        options: {
+                            MODEL_API_KEY: { type: "string", value: MODEL_API_KEY }
                         },
-                        "type": "local",
-                        "agentType": "interface",
-                        "tools": [
+                        provider: { type: "local", runtime: "executable" },
+                        customToolAccess: [
                             "user-input-respond",
                             "user-input-request"
-                        ]
+                        ],
+                        coralPlugins: [],
                     },
-                    "github": {
-                        "options": {
-                            "MODEL_API_KEY": MODEL_API_KEY,
-                            "GITHUB_PERSONAL_ACCESS_TOKEN": GITHUB_PERSONAL_ACCESS_TOKEN
+                    {
+                        id: { name: "github", version: "0.0.1" },
+                        name: "github",
+                        options: {
+                            MODEL_API_KEY: { type: "string", value: MODEL_API_KEY },
+                            GITHUB_PERSONAL_ACCESS_TOKEN: { type: "string", value: GITHUB_PERSONAL_ACCESS_TOKEN }
                         },
-                        "type": "local",
-                        "agentType": "github",
-                        "tools": []
+                        provider: { type: "local", runtime: "executable" },
+                        customToolAccess: [],
+                        coralPlugins: [],
                     },
-                    "firecrawl": {
-                        "options": {
-                            "MODEL_API_KEY": MODEL_API_KEY,
-                            "FIRECRAWL_API_KEY": FIRECRAWL_API_KEY
+                    {
+                        id: { name: "firecrawl", version: "0.0.1" },
+                        name: "firecrawl",
+                        options: {
+                            MODEL_API_KEY: { type: "string", value: MODEL_API_KEY },
+                            FIRECRAWL_API_KEY: { type: "string", value: FIRECRAWL_API_KEY }
                         },
-                        "type": "local",
-                        "agentType": "firecrawl",
-                        "tools": []
+                        provider: { type: "local", runtime: "executable" },
+                        customToolAccess: [],
+                        coralPlugins: [],
                     },
-                    "buffalo": {
-                        "options": {
-                            "BROWSER_USE_MODEL_API_KEY": BROWSER_USE_MODEL_API_KEY,
-                            "BROWSER_USE_MODEL_NAME": BROWSER_USE_MODEL_NAME,
-                            "MODEL_API_KEY": MODEL_API_KEY
+                    {
+                        id: { name: "buffalo", version: "0.0.1" },
+                        name: "buffalo",
+                        options: {
+                            BROWSER_USE_MODEL_API_KEY: { type: "string", value: BROWSER_USE_MODEL_API_KEY },
+                            BROWSER_USE_MODEL_NAME: { type: "string", value: BROWSER_USE_MODEL_NAME },
+                            MODEL_API_KEY: { type: "string", value: MODEL_API_KEY }
                         },
-                        "type": "local",
-                        "agentType": "buffalo",
-                        "tools": []
+                        provider: { type: "local", runtime: "executable" },
+                        customToolAccess: [],
+                        coralPlugins: [],
                     }
-                },
-                "links": [
+                ],
+                "groups": [
                     [
                         "firecrawl",
                         "github",
@@ -149,68 +166,44 @@ export async function POST(req: Request): Promise<Response> {
                         "buffalo"
                     ]
                 ],
-                "tools": {
-                    "user-input-respond": {
-                        "transport": {
-                            "type": "http",
-                            "url": `${prodBaseUrl}/api/mcp-tools/user-input-respond?testSessionId=${incoming.testSessionId}&websiteUrl=${incoming.websiteUrl}&email=${incoming.email}`
-                        },
-                        "toolSchema": {
-                            "name": "answer-question",
-                            "description": "Answer the last question you requested from the user. You can only respond once, and will have to request more input later.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "response": {
-                                        "type": "string",
-                                        "description": "Answer to show to the user."
-                                    }
-                                },
-                                "required": [
-                                    "response"
-                                ]
-                            }
-                        }
-                    },
-                    "user-input-request": {
-                        "transport": {
-                            "type": "http",
-                            "url": `${prodBaseUrl}/api/mcp-tools/user-input-request?testSessionId=${incoming.testSessionId}&websiteUrl=${incoming.websiteUrl}&email=${incoming.email}`
-                        },
-                        "toolSchema": {
-                            "name": "request-question",
-                            "description": "Request a question from the user. Hangs until input is received.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "message": {
-                                        "type": "string",
-                                        "description": "Message to show to the user."
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                "customTools": customTools
             }
         };
 
-        console.log("payload", payload);
+        // Log a concise summary of the payload to avoid huge logs
+        console.log("agentSummary", payload.agentGraphRequest.agents.map(a => ({ name: a.name, id: a.id, provider: a.provider })));
+        console.log("groups", payload.agentGraphRequest.groups);
+        console.log("customToolKeys", Object.keys(payload.agentGraphRequest.customTools));
 
-        const upstreamResponse = await fetch(`${baseUrl}/api/v1/sessions/`, {
+        let upstreamResponse: Response;
+        try {
+            upstreamResponse = await fetch(sessionUrl, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify(payload),
-        });
-
-        if (!upstreamResponse.ok) {
-            throw new Error("Failed to create Coral session", { cause: upstreamResponse.statusText });
+            });
+        } catch (networkError) {
+            console.error("Network error when calling Coral sessions endpoint:", networkError);
+            throw networkError;
         }
 
         const contentType = upstreamResponse.headers.get("content-type") || "application/json";
         const responseText = await upstreamResponse.text();
+        console.log("upstreamResponse", {
+            status: upstreamResponse.status,
+            ok: upstreamResponse.ok,
+            contentType,
+            bodyPreview: responseText.slice(0, 500),
+        });
+
+        if (!upstreamResponse.ok) {
+            return new Response(JSON.stringify({ error: "Upstream request failed", status: upstreamResponse.status, body: responseText }), {
+                status: 502,
+                headers: { "Content-Type": "application/json" },
+            });
+        }
 
         return new Response(responseText, {
             status: upstreamResponse.status,

@@ -2,13 +2,15 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { useQuery, useMutation } from "convex/react"
+import { api } from "@/convex/_generated/api"
 
 type TestMode = "exploratory" | "user_flow" | "preprod_checklist"
 
@@ -22,6 +24,7 @@ interface TestInputFormProps {
 }
 
 export function TestInputForm({ onStartTest }: TestInputFormProps) {
+  const STORAGE_KEY = "buffalo:testInput"
   const [url, setUrl] = useState("")
   const [email, setEmail] = useState("")
   const [credsOpen, setCredsOpen] = useState(false)
@@ -32,6 +35,53 @@ export function TestInputForm({ onStartTest }: TestInputFormProps) {
     "user_flow",
     "preprod_checklist",
   ])
+  const credCount = credRows.filter(r => r.key.trim().length > 0).length
+  const [testsOpen, setTestsOpen] = useState(false)
+  const websiteTests = useQuery(api.tests.getTestsForWebsiteUrl, url ? { websiteUrl: url } : "skip")
+  const websiteDoc = useQuery(api.websites.getByUrl, url ? { url } : "skip")
+  const upsertTest = useMutation(api.tests.upsertTest)
+  const deleteTest = useMutation(api.tests.deleteTest)
+  const upsertWebsite = useMutation(api.websites.upsertWebsite)
+  const [newTestName, setNewTestName] = useState("")
+  const [newTestPrompt, setNewTestPrompt] = useState("")
+
+  // Hydrate from localStorage
+  useEffect(() => {
+    try {
+      const raw = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null
+      if (!raw) return
+      const parsed: any = JSON.parse(raw)
+      if (parsed.url && typeof parsed.url === "string") setUrl(parsed.url)
+      if (parsed.email && typeof parsed.email === "string") setEmail(parsed.email)
+      if (Array.isArray(parsed.selectedModes)) {
+        const allowed: Array<TestMode> = ["exploratory", "user_flow", "preprod_checklist"]
+        const filtered = parsed.selectedModes.filter((m: any) => allowed.includes(m)) as Array<TestMode>
+        if (filtered.length > 0) setSelectedModes(filtered)
+      }
+      if (Array.isArray(parsed.credRows)) {
+        const rows = parsed.credRows
+          .filter((r: any) => r && typeof r === "object")
+          .map((r: any, idx: number) => ({ id: r.id || `${Date.now()}-${idx}`, key: String(r.key || ""), value: String(r.value || "") }))
+        setCredRows(rows)
+      }
+      if (parsed.testsOpen) setTestsOpen(Boolean(parsed.testsOpen))
+    } catch {
+      // ignore
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Persist to localStorage on changes
+  useEffect(() => {
+    try {
+      const payload = { url, email, selectedModes, credRows, testsOpen }
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
+      }
+    } catch {
+      // ignore
+    }
+  }, [url, email, selectedModes, credRows, testsOpen])
 
   const AVAILABLE_MODES: Array<{ key: TestMode; label: string; description: string }> = [
     {
@@ -125,21 +175,50 @@ export function TestInputForm({ onStartTest }: TestInputFormProps) {
               disabled={isLoading}
             />
             {url && !isValidUrl(url) && <p className="text-xs font-mono text-destructive">Please enter a valid URL</p>}
-            <div className="pt-1">
+            <div className="pt-1 flex items-center gap-2">
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Badge
-                      role="button"
-                      onClick={() => setCredsOpen(true)}
-                      className="cursor-pointer select-none px-2 py-0.5 text-[10px]"
-                      variant="outline"
-                    >
-                      credentials
-                    </Badge>
+                    <span className="relative inline-block">
+                      <Badge
+                        role="button"
+                        onClick={() => setCredsOpen(true)}
+                        className="cursor-pointer select-none px-2 py-0.5 text-[10px]"
+                        variant="outline"
+                      >
+                        credentials
+                      </Badge>
+                      {credCount > 0 && (
+                        <span
+                          aria-label="credentials count"
+                          className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-primary text-primary-foreground text-[10px] leading-none flex items-center justify-center border border-background"
+                        >
+                          {credCount}
+                        </span>
+                      )}
+                    </span>
                   </TooltipTrigger>
                   <TooltipContent className="max-w-xs font-mono text-xs">
                     Supply only if the site requires login. We recommend a dummy account.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="relative inline-block">
+                      <Badge
+                        role="button"
+                        onClick={() => setTestsOpen(true)}
+                        className="cursor-pointer select-none px-2 py-0.5 text-[10px]"
+                        variant="outline"
+                      >
+                        saved tests
+                      </Badge>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs font-mono text-xs">
+                    View or manage your saved user flow tests for this URL.
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -226,6 +305,92 @@ export function TestInputForm({ onStartTest }: TestInputFormProps) {
                 <Button type="button" onClick={() => setCredsOpen(false)}>
                   Done
                 </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Saved Tests Modal */}
+          <Dialog open={testsOpen} onOpenChange={setTestsOpen}>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Saved Tests</DialogTitle>
+                <DialogDescription>
+                  Manage your saved user flow tests for {url || "this website"}.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-3">
+                {!url && (
+                  <p className="text-xs text-destructive font-mono">Enter a valid website URL to view saved tests.</p>
+                )}
+
+                {url && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground font-mono">Existing tests</p>
+                    <div className="space-y-2">
+                      {websiteTests?.websiteSpecific?.length ? (
+                        websiteTests.websiteSpecific.map((t) => (
+                          <div key={t._id} className="border rounded-md p-2 flex items-center justify-between">
+                            <div>
+                              <p className="text-sm font-medium">{t.name}</p>
+                              <p className="text-xs text-muted-foreground line-clamp-2">{t.prompt}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-8 text-xs"
+                                onClick={async () => { await deleteTest({ testId: (t as any)._id }); }}
+                              >
+                                Delete
+                              </Button>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-xs text-muted-foreground font-mono">No saved tests yet.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-2 space-y-2">
+                  <p className="text-xs text-muted-foreground font-mono">Add new test</p>
+                  <Input
+                    placeholder="Test name"
+                    value={newTestName}
+                    onChange={(e) => setNewTestName(e.target.value)}
+                    className="font-mono text-sm"
+                  />
+                  <Input
+                    placeholder="Prompt / instructions"
+                    value={newTestPrompt}
+                    onChange={(e) => setNewTestPrompt(e.target.value)}
+                    className="font-mono text-sm"
+                  />
+                  <div>
+                    <Button
+                      type="button"
+                      className="h-8 text-xs"
+                      onClick={async () => {
+                        if (!url || !newTestName.trim() || !newTestPrompt.trim()) return
+                        let websiteId = websiteDoc?._id as any
+                        if (!websiteId) {
+                          websiteId = await upsertWebsite({ url })
+                        }
+                        await upsertTest({ name: newTestName.trim(), prompt: newTestPrompt.trim(), type: "website-specific", websiteId })
+                        setNewTestName("")
+                        setNewTestPrompt("")
+                      }}
+                    >
+                      Save test
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setTestsOpen(false)}>Close</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
