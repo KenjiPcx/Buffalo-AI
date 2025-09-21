@@ -66,7 +66,7 @@ def _extract_final_result_text(history) -> str:
         logger.exception("Failed extracting final result from history: %s", e)
         return str(history)
 
-async def run_prod_checks(base_url: str, prod_checks: List[Task], num_agents: int = 3, headless: bool = False, test_session_id: str = None):
+async def run_prod_checks(base_url: str, prod_checks: List[Task], num_agents: int = 3, headless: bool = False, test_session_id: str = None, sensitive_info: dict | None = None):
     """
     QA check prod checks orchestrator, process tasks in batches
     """
@@ -74,13 +74,13 @@ async def run_prod_checks(base_url: str, prod_checks: List[Task], num_agents: in
         "testSessionId": test_session_id,
         "message": f"Running {len(prod_checks)} prod checks"
     })
-    await run_pool(prod_checks, base_url, num_agents, headless, tag="preprod_checks", test_session_id=test_session_id)
+    await run_pool(prod_checks, base_url, num_agents, headless, tag="preprod_checks", test_session_id=test_session_id, sensitive_info=sensitive_info)
     convex_client.mutation("testSessions:addMessageToTestSession", {
         "testSessionId": test_session_id,
         "message": f"Completed {len(prod_checks)} prod checks"
     })
 
-async def run_user_flow_testing(base_url: str, user_flow_tasks: List[Task], num_agents: int = 3, headless: bool = False, test_session_id: str = None):
+async def run_user_flow_testing(base_url: str, user_flow_tasks: List[Task], num_agents: int = 3, headless: bool = False, test_session_id: str = None, sensitive_info: dict | None = None):
     """
     QA check user flow tasks orchestrator, process tasks in batches
     """
@@ -88,28 +88,55 @@ async def run_user_flow_testing(base_url: str, user_flow_tasks: List[Task], num_
         "testSessionId": test_session_id,
         "message": f"Running {len(user_flow_tasks)} user flow tasks"
     })
-    await run_pool(user_flow_tasks, base_url, num_agents, headless, tag="user_flow", test_session_id=test_session_id)
+    await run_pool(user_flow_tasks, base_url, num_agents, headless, tag="user_flow", test_session_id=test_session_id, sensitive_info=sensitive_info)
     convex_client.mutation("testSessions:addMessageToTestSession", {
         "testSessionId": test_session_id,
         "message": f"Completed {len(user_flow_tasks)} user flow tasks"
     })
 
-async def generate_sitemap(base_url: str) -> list:
+async def generate_sitemap(base_url: str, test_session_id: str | None = None) -> list:
     """Generate a sitemap for a website"""
+    try:
+        if test_session_id:
+            convex_client.mutation("testSessions:addMessageToTestSession", {
+                "testSessionId": test_session_id,
+                "message": f"Starting sitemap generation for {base_url}"
+            })
+    except Exception:
+        pass
+
     res = firecrawl_client.map(url=base_url, limit=35)
+    try:
+        if test_session_id:
+            convex_client.mutation("testSessions:addMessageToTestSession", {
+                "testSessionId": test_session_id,
+                "message": "Raw sitemap fetched, normalizing URLs"
+            })
+    except Exception:
+        pass
 
     # Get all the unique urls from the sitemap
     prompt = f"""
     Generate a sitemap from the website URL, then normalize paths by stripping query params and collapsing dynamic segments (e.g., treat /product/123 and /product/456 as the same type). For each type, select one representative URL (e.g., keep /product/123, drop the rest), it should return you a bunch of starting points within the website to test
+
+    Limit to the top 3 most unique and representative starting points urls
 
     Return an array of starting points
     Sitemap:
     {res}
     """
     response: UniqueUrls = await model.with_structured_output(UniqueUrls).ainvoke(prompt)
+    try:
+        if test_session_id:
+            convex_client.mutation("testSessions:addMessageToTestSession", {
+                "testSessionId": test_session_id,
+                "message": f"Selected {len(response.urls)} unique starting URLs"
+            })
+    except Exception:
+        pass
     return response.urls
     
-async def run_exploratory_testing(base_url: str, num_agents: int = 3, headless: bool = False, test_session_id: str = None):
+async def run_exploratory_testing(base_url: str, num_agents: int = 3, headless: bool = False, test_session_id: str = None, sensitive_info: dict | None = None):
     """
     QA check websites orchestrator, it will:
     1. Get a sitemap of the base url
@@ -126,7 +153,7 @@ async def run_exploratory_testing(base_url: str, num_agents: int = 3, headless: 
         "message": f"Generating sitemap for {base_url}"
     })
 
-    starting_urls = await generate_sitemap(base_url)
+    starting_urls = await generate_sitemap(base_url, test_session_id=test_session_id)
 
     convex_client.mutation("testSessions:addMessageToTestSession", {
             "testSessionId": test_session_id,
@@ -135,14 +162,14 @@ async def run_exploratory_testing(base_url: str, num_agents: int = 3, headless: 
 
     existing_tasks = []
     for starting_url in starting_urls:
-        qa_tasks = await scout_page(starting_url, existing_tasks=existing_tasks)
+        qa_tasks = await scout_page(starting_url, existing_tasks=existing_tasks, test_session_id=test_session_id, sensitive_info=sensitive_info)
 
         convex_client.mutation("testSessions:addMessageToTestSession", {
             "testSessionId": test_session_id,
             "message": f"Scouted {starting_url} and found {len(qa_tasks)} tasks"
         })
 
-        await run_pool(qa_tasks, starting_url, num_agents, headless, tag="exploratory", test_session_id=test_session_id)
+        await run_pool(qa_tasks, starting_url, num_agents, headless, tag="exploratory", test_session_id=test_session_id, sensitive_info=sensitive_info)
 
         convex_client.mutation("testSessions:addMessageToTestSession", {
             "testSessionId": test_session_id,
@@ -154,7 +181,7 @@ async def run_exploratory_testing(base_url: str, num_agents: int = 3, headless: 
         "message": f"Completed exploratory testing"
     })
 
-async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headless: bool = False, tag: str | None = None, test_session_id: str = None) -> str:
+async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headless: bool = False, tag: str | None = None, test_session_id: str = None, sensitive_info: dict | None = None) -> str:
     start_time = time.time()
 
     task_execution_ids = []
@@ -183,6 +210,10 @@ async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headle
         You are a browser automation agent that executes a single test task.
         You will be given a task description and a website URL.
         You will need to execute the task on the website.
+
+        ### Dealing with login pages
+        Do not bother testing login or integration pages, just focus on the main website.
+        If you need to login, you should have login details in the sensitive info if they are provided, otherwise just fail the test and say that you need login details.
         
         ## QA Agent Self-Check Questions
 
@@ -216,7 +247,7 @@ async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headle
     """)
 
     async def run_single_agent(i: int):
-        task_description =  browser_agent_system_prompt + f"\n\nTask to test:\n{tasks[i].prompt}"
+        task_description = f"\n\nTask to test:\n{tasks[i].prompt}"
 
         # Update the task execution status to running
         convex_client.mutation("testExecutions:updateTestExecutionStatus", {
@@ -290,7 +321,7 @@ async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headle
                 **window_config
             )
             
-            browser_session = BrowserSession(browser_profile=browser_profile)
+            browser_session = BrowserSession(browser_profile=browser_profile, allowed_domains=[base_url])
             logger.debug("Agent %d BrowserSession created", i)
             
             try:
@@ -318,10 +349,12 @@ async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headle
                     )
 
                 agent = Agent(
+                    extend_system_message=browser_agent_system_prompt,
                     task=task_description,
                     llm=browser_llm,
                     browser_session=browser_session,
                     use_vision=True,
+                    sensitive_data=sensitive_info,
                     output_model_schema=TestExecutionResult,
                     register_new_step_callback=on_step
                 )
@@ -439,10 +472,18 @@ async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headle
     logger.info("run_pool completed for %s in %.2fs", base_url, test_data["duration"])
     return test_data
 
-async def scout_page(base_url: str, existing_tasks: list[Task]) -> list[Task]:
+async def scout_page(base_url: str, existing_tasks: list[Task], test_session_id: str | None = None, sensitive_info: dict | None = None) -> list[Task]:
     """Scout agent that identifies all interactive elements on the page"""
     try:
         logger.info("Scout starting for base_url=%s", base_url)
+        try:
+            if test_session_id:
+                convex_client.mutation("testSessions:addMessageToTestSession", {
+                    "testSessionId": test_session_id,
+                    "message": f"Scouting interactive elements on {base_url}"
+                })
+        except Exception:
+            pass
         browser_profile = BrowserProfile(
             headless=True,
             disable_security=True,
@@ -463,23 +504,35 @@ async def scout_page(base_url: str, existing_tasks: list[Task]) -> list[Task]:
             wait_between_actions=0.4
         )
         
-        browser_session = BrowserSession(browser_profile=browser_profile)
+        browser_session = BrowserSession(browser_profile=browser_profile, allowed_domains=[base_url])
         logger.debug("Scout BrowserSession created")
         
         try:
-            scout_task = f"""Navigate to {base_url} using the go_to_url action, then identify ALL interactive elements on the page. Do NOT click anything, just observe and catalog what's available. List buttons, links, forms, input fields, menus, dropdowns, and any other clickable elements you can see. Provide a comprehensive inventory."""
+            scout_task = f"""Navigate to {base_url} using the go_to_url action, if there is a login page, then login first (you should have login details in the sensitive info if they are provided), then identify ALL interactive elements on the page. Do NOT click anything, just observe and catalog what's available. List buttons, links, forms, input fields, menus, dropdowns, and any other clickable elements you can see. Provide a comprehensive inventory."""
             
             agent = Agent(
+                extend_system_message="""### Dealing with login pages
+        Do not bother testing login or integration pages, just focus on the main website.
+        If you need to login, you should have login details in the sensitive info if they are provided, otherwise just fail the test and say that you need login details.""",
                 task=scout_task,
                 llm=browser_llm,
                 browser_session=browser_session,
-                use_vision=True
+                use_vision=True,
+                sensitive_data=sensitive_info
             )
             logger.info("Scout agent starting run")
             t0 = time.time()
             history = await agent.run()
             elapsed = time.time() - t0
             logger.info("Scout agent finished run in %.2fs", elapsed)
+            try:
+                if test_session_id:
+                    convex_client.mutation("testSessions:addMessageToTestSession", {
+                        "testSessionId": test_session_id,
+                        "message": "Scout completed, generating test cases"
+                    })
+            except Exception:
+                pass
         finally:
             # Properly close scout browser session to prevent lingering processes
             try:
@@ -502,6 +555,7 @@ async def scout_page(base_url: str, existing_tasks: list[Task]) -> list[Task]:
             - Name concrete ACTIONS to use (e.g., go_to_url, click_element_by_text, send_keys, extract_structured_data)
             - Define success/failure oracles
             - Avoid low-value tests (e.g., “can type in field”)
+            - Don't bother testing 3rd party integrations, you can test if the app redirects properly but dont actually create tests on the third party app
 
             Scout report:
             {scout_result}
@@ -542,11 +596,27 @@ async def scout_page(base_url: str, existing_tasks: list[Task]) -> list[Task]:
         
         element_tasks = partition_response.tasks
         logger.info("Scout partitioned %d element tasks", len(element_tasks))
+        try:
+            if test_session_id:
+                convex_client.mutation("testSessions:addMessageToTestSession", {
+                    "testSessionId": test_session_id,
+                    "message": f"Generated {len(element_tasks)} test cases for {base_url}"
+                })
+        except Exception:
+            pass
         return element_tasks
         
     except Exception as e:
         # fallback tasks if scouting fails
         logger.exception("Scout failed for base_url=%s: %s", base_url, e)
+        try:
+            if test_session_id:
+                convex_client.mutation("testSessions:addMessageToTestSession", {
+                    "testSessionId": test_session_id,
+                    "message": f"Scout failed for {base_url}, using fallback tasks"
+                })
+        except Exception:
+            pass
         return [
             Task(
                 name="Test navigation elements in the header area",

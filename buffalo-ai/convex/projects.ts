@@ -156,3 +156,35 @@ export const deleteWebsite = mutation({
     await ctx.db.delete(args.id);
   },
 });
+
+export const addSensitiveInfo = mutation({
+  args: { id: v.id("projects"), sensitiveInfo: v.record(v.string(), v.string()) },
+  handler: async (ctx, args) => {
+    const project = await ctx.db.get(args.id);
+    if (!project) {
+      throw new Error("Project not found");
+    }
+    const key = project.url;
+    await ctx.db.patch(args.id, { sensitiveInfo: {
+      [key]: args.sensitiveInfo
+    } });
+  },
+});
+
+export const getSensitiveInfo = query({
+  args: { id: v.id("projects") },
+  handler: async (ctx, args) => {
+    const project = await ctx.db.get(args.id);
+    if (!project) {
+      throw new Error("Project not found");
+    }
+    return project.sensitiveInfo;
+  },
+});
+
+export const updateSensitiveInfo = mutation({
+  args: { id: v.id("projects"), sensitiveInfo: v.any() },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, { sensitiveInfo: args.sensitiveInfo });
+  },
+});

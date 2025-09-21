@@ -4,6 +4,10 @@ import asyncio
 from langchain.prompts import ChatPromptTemplate
 from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_core.messages import HumanMessage, AIMessage
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.prebuilt import create_react_agent
+
 import os
 import json
 import urllib.parse
@@ -17,6 +21,8 @@ def get_tools_description(tools):
         f"Tool: {tool.name}, Schema: {json.dumps(tool.args).replace('{', '{{').replace('}', '}}')}"
         for tool in tools
     )
+
+messages = []
 
 async def create_agent(coral_tools, agent_tools):
     coral_tools_description = get_tools_description(coral_tools)
@@ -43,14 +49,14 @@ async def create_agent(coral_tools, agent_tools):
             # Inputs:
             Users can provide
             - a website URL
-            - a test session id (optional)
+            - a test session id (optional) (please call the `generate_test_session` tool if not provided)
             - a list of modes
             - a project id (optional)
             - a email (optional)
 
             # Tools:
-            - generate_test_session: Generate a test session for a website (call this if test session is not provided)
-            - start_test_session: Starts running tests in batches with parallel browser automation given a website URL, mode can be "exploratory", "user-defined", or "buffalo-preprod-checks", if not provided, the default mode is "exploratory"
+            - generate_test_session: Generate a test session for a website using this tool (call this if test session is not provided, you must use this tool to generate the test session, do not generate yourself)
+            - start_test_session: Starts running tests in batches with parallel browser automation given a website URL, mode can be "exploratory", "user-defined", or "buffalo-preprod-checks", if not provided, the default mode is "exploratory", you don't need to ask for clarification
             - analyze_test_session: Generate a structured test
             - write_todos: Write todos to a help you keep track of your tasks, you can rewrite it to check off the tasks as you complete them
 

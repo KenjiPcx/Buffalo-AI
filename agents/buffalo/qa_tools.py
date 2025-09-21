@@ -4,8 +4,9 @@ from custom_types import CustomTestDoc, Task
 from qa_util import run_exploratory_testing, run_prod_checks, run_user_flow_testing, summarize_test_session
 from langchain_core.tools import tool
 from configs import convex_client, model
+import logging
 
-
+logger = logging.getLogger(__name__)
 
 @tool
 async def start_test_session(test_session_id: str, base_url: str, num_agents: int = 3, headless: bool = False, modes: list[str] = ["exploratory", "user-defined", "buffalo-preprod-checks"], project_id: Optional[str] = None) -> str:
@@ -29,7 +30,11 @@ async def start_test_session(test_session_id: str, base_url: str, num_agents: in
                 "testSessionId": test_session_id,
                 "message": "Starting exploratory testing"
             })
-            await run_exploratory_testing(base_url=base_url, num_agents=num_agents, headless=headless, test_session_id=test_session_id)
+
+            sensitive_info = None if project_id is None else convex_client.query("projects:getSensitiveInfo", {"id": project_id})
+            logger.info(f"Sensitive info: {sensitive_info}")
+
+            await run_exploratory_testing(base_url=base_url, num_agents=num_agents, headless=headless, test_session_id=test_session_id, sensitive_info=sensitive_info)
             convex_client.mutation("testSessions:addMessageToTestSession", {
                 "testSessionId": test_session_id,
                 "message": "Exploratory testing completed"
@@ -51,7 +56,7 @@ async def start_test_session(test_session_id: str, base_url: str, num_agents: in
                     {"projectId": project_id},
                 )
                 user_flow_tasks = [Task(name=t["name"], prompt=t["prompt"]) for t in website_tests]
-                await run_user_flow_testing(base_url=base_url, user_flow_tasks=user_flow_tasks, num_agents=num_agents, headless=headless, test_session_id=test_session_id)
+                await run_user_flow_testing(base_url=base_url, user_flow_tasks=user_flow_tasks, num_agents=num_agents, headless=headless, test_session_id=test_session_id, sensitive_info=sensitive_info)
                 convex_client.mutation("testSessions:addMessageToTestSession", {
                     "testSessionId": test_session_id,
                     "message": "User-defined flow testing completed"
@@ -66,7 +71,7 @@ async def start_test_session(test_session_id: str, base_url: str, num_agents: in
                 "customTests:getBuffaloDefinedTests", {}
             )
             prod_checks = [Task(name=t["name"], prompt=t["prompt"]) for t in website_tests]
-            await run_prod_checks(base_url=base_url, prod_checks=prod_checks, num_agents=num_agents, headless=headless, test_session_id=test_session_id)
+            await run_prod_checks(base_url=base_url, prod_checks=prod_checks, num_agents=num_agents, headless=headless, test_session_id=test_session_id, sensitive_info=sensitive_info)
             convex_client.mutation("testSessions:addMessageToTestSession", {
                 "testSessionId": test_session_id,
                 "message": "Buffalo preprod checks completed"
@@ -140,20 +145,22 @@ def write_todos(todos: str) -> str:
 async def generate_test_session(base_url: str, modes: list[Literal["exploratory", "user-defined", "buffalo-defined"]], email: str) -> str:
     """Generate a test session for a website"""
     
-    test_session_id = convex_client.mutation("testSessions:createTestSession", {
-        "websiteUrl": base_url,
-        "modes": modes,
-        "email": email,
-    })
-
     try:
-        convex_client.mutation("testSessions:addMessageToTestSession", {
-            "testSessionId": test_session_id,
-            "message": f"Test session created for {base_url} with modes={modes}"
+        test_session_id = convex_client.mutation("testSessions:createTestSession", {
+            "websiteUrl": base_url,
+            "modes": modes,
+            "email": email,
         })
-    except Exception:
-        pass
 
-    return test_session_id
+        try:
+            convex_client.mutation("testSessions:addMessageToTestSession", {
+                "testSessionId": test_session_id,
+                "message": f"Test session created for {base_url} with modes={modes}"
+            })
+        except Exception:
+            pass
+        return test_session_id
+    except Exception as e:
+        return f"Error generating test session: {str(e)}"
 
 buffalo_tools = [start_test_session, analyze_test_session, write_todos, generate_test_session]

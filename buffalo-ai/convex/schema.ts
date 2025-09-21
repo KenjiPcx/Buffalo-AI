@@ -9,6 +9,7 @@ export default defineSchema({
     description: v.optional(v.string()),
     lastTestedAt: v.optional(v.number()), // Unix timestamp
     lastTestSessionStatus: v.optional(v.union(v.literal("success"), v.literal("failed"), v.literal("partial"))),
+    sensitiveInfo: v.optional(v.any()),
   })
     .index("by_url", ["url"]),
 
