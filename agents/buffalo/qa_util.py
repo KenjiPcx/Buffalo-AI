@@ -186,6 +186,9 @@ async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headle
 
     task_execution_ids = []
 
+    if sensitive_info is not None:
+        logger.info(f"Sensitive info: {sensitive_info}")
+
     try:
         convex_client.mutation("testSessions:addMessageToTestSession", {
             "testSessionId": test_session_id,
@@ -212,8 +215,7 @@ async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headle
         You will need to execute the task on the website.
 
         ### Dealing with login pages
-        Do not bother testing login or integration pages, just focus on the main website.
-        If you need to login, you should have login details in the sensitive info if they are provided, otherwise just fail the test and say that you need login details.
+        If you encounter a login page, you should have login details in the sensitive data if they are provided, otherwise just fail the test and say that you need login details.
         
         ## QA Agent Self-Check Questions
 
@@ -348,6 +350,12 @@ async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headle
                         {"testExecutionId": task_execution_ids[i], "storageId": storage_id},
                     )
 
+                if sensitive_info is not None:
+                    logger.info(f"Sensitive info: {sensitive_info}, Kenji will be able to login")
+                else:
+                    logger.info("No sensitive info provided, Kenji will not be able to login")
+
+    
                 agent = Agent(
                     extend_system_message=browser_agent_system_prompt,
                     task=task_description,
@@ -508,7 +516,10 @@ async def scout_page(base_url: str, existing_tasks: list[Task], test_session_id:
         logger.debug("Scout BrowserSession created")
         
         try:
-            scout_task = f"""Navigate to {base_url} using the go_to_url action, if there is a login page, then login first (you should have login details in the sensitive info if they are provided), then identify ALL interactive elements on the page. Do NOT click anything, just observe and catalog what's available. List buttons, links, forms, input fields, menus, dropdowns, and any other clickable elements you can see. Provide a comprehensive inventory."""
+            scout_task = f"""Navigate to {base_url} using the go_to_url action, then identify ALL interactive elements on the page. Do NOT click anything, just observe and catalog what's available. List buttons, links, forms, input fields, menus, dropdowns, and any other clickable elements you can see. Provide a comprehensive inventory, also note whether you need to login to test the page or not, please put a final variable saying login_required: True or False
+            
+            if there is a login page, then login first (you should have login details in the sensitive info if they are provided, do not identify interactive elements in the login page or any third party apps navigated from the main page, only generate interactive elements if there is core logic to the user's app)
+            """
             
             agent = Agent(
                 extend_system_message="""### Dealing with login pages
@@ -578,12 +589,16 @@ async def scout_page(base_url: str, existing_tasks: list[Task], test_session_id:
             - Custom actions (if available): ALWAYS use them when relevant (e.g., get_2fa_code for 2FA). NEVER scrape 2FA codes from the page.
             - Error recovery: if navigation blocked by anti-bot/captcha, try search_google → open result; if timeout, use go_back and retry once, then warn.
 
+            ### Login pages
+            The scout report should mention whether you need to login to test the website or not, it has a variable called login_required: True or False
+            If it is true, then you need to include a step in all your test cases to login first before navigating to the right page
+
             Output format (JSON array of compact tasks):
             {{
                 "tasks": [
                     {{
                         "name": "Test [element intent/description]",
-                        "prompt": "Navigate to {base_url} using go_to_url, then [named ACTION with exact target]. Expect SUCCESS: [specific oracle]. If click fails, use send_keys fallback. If page times out, go_back and retry once. Expect FAILURE: [specific error] if applicable."
+                        "prompt": "[If login true, then "First login to the website using the login details"] Navigate to {base_url} using go_to_url, then [named ACTION with exact target]. Expect SUCCESS: [specific oracle]. If click fails, use send_keys fallback. If page times out, go_back and retry once. Expect FAILURE: [specific error] if applicable."
                     }}
                 ]
             }}
