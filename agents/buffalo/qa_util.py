@@ -32,12 +32,11 @@ import asyncio
 from typing import List, Optional, Literal
 from browser_use import Agent, BrowserProfile, BrowserSession
 from browser_use.browser.views import BrowserStateSummary
-import firecrawl
 from pydantic import BaseModel, Field
 import requests
 
 from custom_types import Task, UniqueUrls, TestingTaskList
-from configs import convex_client, get_screen_dimensions, model, browser_llm
+from configs import convex_client, get_screen_dimensions, model, browser_llm, firecrawl_client
 logger = logging.getLogger(__name__)
 
 class TestExecutionResult(BaseModel):
@@ -97,11 +96,11 @@ async def run_user_flow_testing(base_url: str, user_flow_tasks: List[Task], num_
 
 async def generate_sitemap(base_url: str) -> list:
     """Generate a sitemap for a website"""
-    res = firecrawl.map(url=base_url, limit=35)
+    res = firecrawl_client.map(url=base_url, limit=35)
 
     # Get all the unique urls from the sitemap
     prompt = f"""
-    Ask the Firecrawl agent to generate a sitemap from the website URL, then normalize paths by stripping query params and collapsing dynamic segments (e.g., treat /product/123 and /product/456 as the same type). For each type, select one representative URL (e.g., keep /product/123, drop the rest), it should return you a bunch of starting points within the website to test
+    Generate a sitemap from the website URL, then normalize paths by stripping query params and collapsing dynamic segments (e.g., treat /product/123 and /product/456 as the same type). For each type, select one representative URL (e.g., keep /product/123, drop the rest), it should return you a bunch of starting points within the website to test
 
     Return an array of starting points
     Sitemap:
@@ -277,9 +276,9 @@ async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headle
                 user_data_dir=None,
                 args=browser_args,
                 ignore_default_args=['--enable-automation'],
-                wait_for_network_idle_page_load_time=1.0,  # Reduced for faster execution
-                maximum_wait_page_load_time=5.0,  # Reduced timeout
-                wait_between_actions=0.3,  # Faster actions
+                wait_for_network_idle_page_load_time=2.0,
+                maximum_wait_page_load_time=15.0,
+                wait_between_actions=0.4,
                 **window_config
             )
             
@@ -356,6 +355,16 @@ async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headle
             
         except Exception as e:
             logger.exception("Error running agent %d: %s", i, e)
+            try:
+                convex_client.mutation("testExecutions:saveTestExecutionFailure", {
+                    "testExecutionId": task_execution_ids[i],
+                    "failure": {
+                        "message": "Execution failed",
+                        "errorMessage": str(e)
+                    }
+                })
+            except Exception as persist_err:
+                logger.exception("Failed to persist execution failure for agent %d: %s", i, persist_err)
             return {
                 "agent_id": i,
                 "task": task_description,
@@ -426,9 +435,9 @@ async def scout_page(base_url: str, existing_tasks: list[Task]) -> list[Task]:
                 '--no-default-browser-check',
                 '--disable-background-networking'
             ],
-            wait_for_network_idle_page_load_time=1.0,  # Reduced for faster execution
-            maximum_wait_page_load_time=5.0,  # Reduced timeout
-            wait_between_actions=0.3  # Faster actions
+            wait_for_network_idle_page_load_time=2.0,
+            maximum_wait_page_load_time=15.0,
+            wait_between_actions=0.4
         )
         
         browser_session = BrowserSession(browser_profile=browser_profile)

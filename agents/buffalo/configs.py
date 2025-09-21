@@ -56,4 +56,4 @@ def get_screen_dimensions():
     except Exception:
         return 1920, 1080
 
-firecrawl = Firecrawl(api_key=os.getenv("FIRECRAWL_API_KEY"))
+firecrawl_client = Firecrawl(api_key=os.getenv("FIRECRAWL_API_KEY"))
