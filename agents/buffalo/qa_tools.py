@@ -18,9 +18,22 @@ async def start_test_session(test_session_id: str, base_url: str, num_agents: in
         headless: Whether to run browsers in headless mode (default: False)
         modes: The modes of the test session (default: ["exploratory", "user-defined", "buffalo-preprod-checks"])
     """
-    try:        
+    try:
+        convex_client.mutation("testSessions:addMessageToTestSession", {
+            "testSessionId": test_session_id,
+            "message": f"Starting test session for {base_url} with modes={modes} and {num_agents} agents (headless={headless})"
+        })
+
         if "exploratory" in modes:
+            convex_client.mutation("testSessions:addMessageToTestSession", {
+                "testSessionId": test_session_id,
+                "message": "Starting exploratory testing"
+            })
             await run_exploratory_testing(base_url=base_url, num_agents=num_agents, headless=headless, test_session_id=test_session_id)
+            convex_client.mutation("testSessions:addMessageToTestSession", {
+                "testSessionId": test_session_id,
+                "message": "Exploratory testing completed"
+            })
         
         if "user-defined" in modes:
             if project_id is None:
@@ -29,20 +42,40 @@ async def start_test_session(test_session_id: str, base_url: str, num_agents: in
                     "message": "Skipping user-defined tests: missing project_id"
                 })
             else:
+                convex_client.mutation("testSessions:addMessageToTestSession", {
+                    "testSessionId": test_session_id,
+                    "message": "Starting user-defined flow testing"
+                })
                 website_tests: list[CustomTestDoc] = convex_client.query(
                     "customTests:getUserDefinedTestsByProject",
                     {"projectId": project_id},
                 )
                 user_flow_tasks = [Task(name=t["name"], prompt=t["prompt"]) for t in website_tests]
                 await run_user_flow_testing(base_url=base_url, user_flow_tasks=user_flow_tasks, num_agents=num_agents, headless=headless, test_session_id=test_session_id)
+                convex_client.mutation("testSessions:addMessageToTestSession", {
+                    "testSessionId": test_session_id,
+                    "message": "User-defined flow testing completed"
+                })
         
         if "buffalo-preprod-checks" in modes:
+            convex_client.mutation("testSessions:addMessageToTestSession", {
+                "testSessionId": test_session_id,
+                "message": "Starting Buffalo preprod checks"
+            })
             website_tests: list[CustomTestDoc] = convex_client.query(
                 "customTests:getBuffaloDefinedTests", {}
             )
             prod_checks = [Task(name=t["name"], prompt=t["prompt"]) for t in website_tests]
             await run_prod_checks(base_url=base_url, prod_checks=prod_checks, num_agents=num_agents, headless=headless, test_session_id=test_session_id)
+            convex_client.mutation("testSessions:addMessageToTestSession", {
+                "testSessionId": test_session_id,
+                "message": "Buffalo preprod checks completed"
+            })
         
+        convex_client.mutation("testSessions:addMessageToTestSession", {
+            "testSessionId": test_session_id,
+            "message": "All requested modes completed"
+        })
         # Mark session completed
         convex_client.mutation("testSessions:completeTestSession", {"testSessionId": test_session_id})
         return f"Test session completed"
@@ -51,6 +84,13 @@ async def start_test_session(test_session_id: str, base_url: str, num_agents: in
         # Mark session failed
         try:
             convex_client.mutation("testSessions:failTestSession", {"testSessionId": test_session_id, "errorMessage": str(e)})
+        except Exception:
+            pass
+        try:
+            convex_client.mutation("testSessions:addMessageToTestSession", {
+                "testSessionId": test_session_id,
+                "message": f"Session failed: {str(e)}"
+            })
         except Exception:
             pass
         return f"Error starting test: {str(e)}"
@@ -70,6 +110,14 @@ async def analyze_test_session(test_id: str) -> dict:
         # Fetch the created report and return structured data the UI can consume
         report = convex_client.query("testReports:getReportBySessionId", {"testSessionId": test_id})
         # Provide a deep link to the app's session page if available
+        try:
+            count = len(report["issues"]) if report and report.get("issues") else 0
+            convex_client.mutation("testSessions:addMessageToTestSession", {
+                "testSessionId": test_id,
+                "message": f"Report generated with {count} issues. View at /testSessions/{test_id}"
+            })
+        except Exception:
+            pass
         return report
         
     except Exception as e:
@@ -97,6 +145,14 @@ async def generate_test_session(base_url: str, modes: list[Literal["exploratory"
         "modes": modes,
         "email": email,
     })
+
+    try:
+        convex_client.mutation("testSessions:addMessageToTestSession", {
+            "testSessionId": test_session_id,
+            "message": f"Test session created for {base_url} with modes={modes}"
+        })
+    except Exception:
+        pass
 
     return test_session_id
 

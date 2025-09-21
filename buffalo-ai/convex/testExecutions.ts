@@ -58,7 +58,14 @@ export const updateTestExecutionStatus = mutation({
     status: v.union(v.literal("pending"), v.literal("running"), v.literal("completed"), v.literal("failed"), v.literal("skipped"))
   },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.testExecutionId, { status: args.status });
+    const updates: any = { status: args.status };
+    if (args.status === "running") {
+      updates.startedAt = Date.now();
+    }
+    if (args.status === "completed" || args.status === "failed" || args.status === "skipped") {
+      updates.completedAt = Date.now();
+    }
+    await ctx.db.patch(args.testExecutionId, updates);
   },
 });
 
@@ -70,7 +77,24 @@ export const saveTestExecutionResults = mutation({
     errorMessage: v.optional(v.union(v.string(), v.null()))
   }) },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.testExecutionId, { ...args.results, status: "completed" });
+    await ctx.db.patch(args.testExecutionId, { ...args.results, status: "completed", completedAt: Date.now() });
+  },
+});
+
+// Save failure of a test execution
+export const saveTestExecutionFailure = mutation({
+  args: { testExecutionId: v.id("testExecutions"), failure: v.object({
+    message: v.string(),
+    errorMessage: v.union(v.string(), v.null()),
+  }) },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.testExecutionId, {
+      passed: false,
+      message: args.failure.message,
+      errorMessage: args.failure.errorMessage,
+      status: "failed",
+      completedAt: Date.now(),
+    });
   },
 });
 

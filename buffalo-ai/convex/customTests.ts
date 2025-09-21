@@ -7,8 +7,7 @@ export const getUserDefinedTestsByProject = query({
   handler: async (ctx, args) => {
     return await ctx.db
       .query("customTests")
-      .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
-      .filter((q) => q.eq(q.field("type"), "user-defined"))
+      .withIndex("by_project_and_type", (q) => q.eq("projectId", args.projectId).eq("type", "user-defined"))
       .collect();
   },
 });

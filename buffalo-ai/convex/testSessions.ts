@@ -32,6 +32,28 @@ export const createTestSession = mutation({
   },
 });
 
+export const setRemoteSessionId = mutation({
+  args: {
+    testSessionId: v.id("testSessions"),
+    remoteSessionId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.testSessionId, { remoteSessionId: args.remoteSessionId });
+  },
+});
+
+export const getRemoteSessionId = query({
+  args: {
+    testSessionId: v.id("testSessions"),
+  },
+  handler: async (ctx, args): Promise<string | undefined> => {
+    const testSession = await ctx.db.get(args.testSessionId);
+
+    if (!testSession) return undefined;
+    return testSession.remoteSessionId;
+  },
+});
+
 // Fetch a session by sessionId
 export const getBySessionId = query({
   args: {
@@ -85,14 +107,14 @@ export const cancelRun = mutation({
 // Get latest runs for a website
 export const getWebsiteRuns = query({
   args: {
-    websiteId: v.id("websites"),
+    websiteUrl: v.string(),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const limit = args.limit || 10;
     return await ctx.db
       .query("testSessions")
-      .withIndex("by_website", (q) => q.eq("websiteUrl", args.websiteId))
+      .withIndex("by_website", (q) => q.eq("websiteUrl", args.websiteUrl))
       .order("desc")
       .take(limit);
   },
@@ -106,5 +128,32 @@ export const addMessageToTestSession = mutation({
 
     await ctx.db.patch(args.testSessionId, { messages: [...(testSession.messages || []), args.message] });
     return args.testSessionId;
+  },
+});
+
+// Mark a test session as completed
+export const completeTestSession = mutation({
+  args: { testSessionId: v.id("testSessions") },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.testSessionId, {
+      status: "completed",
+      completedAt: Date.now(),
+    });
+  },
+});
+
+// Mark a test session as failed
+export const failTestSession = mutation({
+  args: { testSessionId: v.id("testSessions"), errorMessage: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.testSessionId, {
+      status: "failed",
+      completedAt: Date.now(),
+    });
+    if (args.errorMessage) {
+      const session = await ctx.db.get(args.testSessionId);
+      const messages = (session?.messages || []);
+      await ctx.db.patch(args.testSessionId, { messages: [...messages, `Error: ${args.errorMessage}`] });
+    }
   },
 });

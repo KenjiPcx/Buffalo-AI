@@ -27,7 +27,8 @@ export default defineSchema({
   })
     .index("by_project", ["projectId"])
     .index("by_type", ["type"])
-    .index("by_category", ["category"]),
+    .index("by_category", ["category"])
+    .index("by_project_and_type", ["projectId", "type"]),
 
   // Test sessions - when we execute tests on a website
   testSessions: defineTable({
@@ -52,6 +53,7 @@ export default defineSchema({
       v.literal("cancelled")
     ),
     email: v.string(),
+    remoteSessionId: v.optional(v.string()),
     startedAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
     results: v.optional(v.object({
@@ -117,4 +119,5 @@ export default defineSchema({
     ),
   })
     .index("by_testSessionId", ["testSessionId"]),
+
 });

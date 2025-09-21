@@ -159,6 +159,14 @@ async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headle
 
     task_execution_ids = []
 
+    try:
+        convex_client.mutation("testSessions:addMessageToTestSession", {
+            "testSessionId": test_session_id,
+            "message": f"Creating {len(tasks)} test executions for {tag or 'general'} on {base_url}"
+        })
+    except Exception:
+        pass
+
     # Add a test execution for each qa_task
     for task in tasks:
         task_execution_id = convex_client.mutation("testExecutions:createTestExecution", {
@@ -381,6 +389,14 @@ async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headle
             return await run_single_agent(i)
     
     logger.info("Running %d tasks with up to %d concurrent agents for base_url=%s (headless=%s, tag=%s)", len(tasks), num_agents, base_url, headless, tag)
+    try:
+        convex_client.mutation("testSessions:addMessageToTestSession", {
+            "testSessionId": test_session_id,
+            "message": f"Running {len(tasks)} tasks with up to {num_agents} agents (headless={headless})"
+        })
+    except Exception:
+        pass
+
     results = await asyncio.gather(
         *[run_agent_with_semaphore(i) for i in range(len(tasks))], 
         return_exceptions=True
@@ -397,6 +413,13 @@ async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headle
         else:
             success_count += 1
     logger.info("Agents completed: success=%d, error=%d", success_count, error_count)
+    try:
+        convex_client.mutation("testSessions:addMessageToTestSession", {
+            "testSessionId": test_session_id,
+            "message": f"Completed batch: success={success_count}, error={error_count}"
+        })
+    except Exception:
+        pass
     
     end_time = time.time()
     
@@ -583,6 +606,14 @@ async def summarize_test_session(test_session_id: str) -> str:
     # Convert Pydantic model to dictionary
     report_data = response.model_dump()
     
+    try:
+        convex_client.mutation("testSessions:addMessageToTestSession", {
+            "testSessionId": test_session_id,
+            "message": "Generating final report from test executions"
+        })
+    except Exception:
+        pass
+
     convex_client.mutation(
         "testReports:createReport",
         {
@@ -591,5 +622,12 @@ async def summarize_test_session(test_session_id: str) -> str:
             "issues": report_data["issues"],
         },
     )
+    try:
+        convex_client.mutation("testSessions:addMessageToTestSession", {
+            "testSessionId": test_session_id,
+            "message": "Report created"
+        })
+    except Exception:
+        pass
     
     return "Report generated and saved."
