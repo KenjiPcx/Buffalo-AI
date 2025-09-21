@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  buffalo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: buffalo-agent
+    restart: unless-stopped
+    
+    # Environment variables
+    environment:
+      # Coral Server Configuration
+      - CORAL_SSE_URL=${CORAL_SSE_URL}
+      - CORAL_AGENT_ID=${CORAL_AGENT_ID:-buffalo}
+      - CORAL_ORCHESTRATION_RUNTIME=${CORAL_ORCHESTRATION_RUNTIME}
+      - TIMEOUT_MS=${TIMEOUT_MS:-300}
+      
+      # API Keys and Model Configuration
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - BROWSER_USE_MODEL=${BROWSER_USE_MODEL:-gemini-2.0-flash-exp}
+      - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY}
+      
+      # Convex Configuration
+      - CONVEX_URL=${CONVEX_URL}
+      - CONVEX_DEPLOY_KEY=${CONVEX_DEPLOY_KEY}
+      
+      # Browser Configuration
+      - DISPLAY=:99
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    
+    # Volumes for persistent data and logs
+    volumes:
+      - ./logs:/app/logs
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    
+    # Security options for browser operation
+    security_opt:
+      - seccomp:unconfined
+    
+    # Shared memory size for browser operation
+    shm_size: 2gb
+    
+    # Network configuration
+    networks:
+      - buffalo-network
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "python"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+
+networks:
+  buffalo-network:
+    driver: bridge
+
+# Optional: Add a volume for logs persistence
+volumes:
+  buffalo-logs:
+    driver: local

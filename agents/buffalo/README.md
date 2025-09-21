@@ -38,12 +38,45 @@ A LangChain-based browser QA agent that can crawl a site, generate concrete UI t
 - All: runs all three in sequence.
 
 ### Quick start
-Environment
-- Required env vars (examples):
-  - MODEL_PROVIDER, MODEL_NAME, MODEL_API_KEY
-  - BROWSER_USE_MODEL_NAME, BROWSER_USE_MODEL_API_KEY
-  - CONVEX_URL
-  - Optional: MODEL_BASE_URL, MODEL_TEMPERATURE, MODEL_MAX_TOKENS
+
+#### Docker (Recommended)
+
+The easiest way to run Buffalo is using Docker, which handles all browser dependencies automatically:
+
+1. **Setup environment variables:**
+   ```bash
+   cp env.example .env
+   # Edit .env with your API keys and configuration
+   ```
+
+2. **Build and run with Docker Compose:**
+   ```bash
+   docker-compose up --build
+   ```
+
+3. **Or build and run manually:**
+   ```bash
+   # Build the image
+   docker build -t buffalo-agent .
+   
+   # Run the container
+   docker run --env-file .env \
+     --shm-size=2g \
+     --security-opt seccomp:unconfined \
+     buffalo-agent
+   ```
+
+#### Local Development
+
+Environment variables required:
+- `CORAL_SSE_URL`, `CORAL_AGENT_ID` - Coral server configuration
+- `GOOGLE_API_KEY` - For Gemini LLM
+- `OPENAI_API_KEY` - For OpenAI models (optional)
+- `BROWSER_USE_MODEL` - Model for browser automation (default: gemini-2.0-flash-exp)
+- `CONVEX_URL`, `CONVEX_DEPLOY_KEY` - Convex database
+- `FIRECRAWL_API_KEY` - For web crawling (optional)
+
+**Note:** Docker is recommended as it automatically installs Playwright browsers and handles all system dependencies.
 
 ### CLI scripts
 
