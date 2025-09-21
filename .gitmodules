@@ -7,3 +7,6 @@
 [submodule "coral-studio"]
 	path = coral-studio
 	url = https://github.com/Coral-Protocol/coral-studio.git
+[submodule "agents/buffalo"]
+	path = agents/buffalo
+	url = https://github.com/KenjiPcx/buffalo-agent.git
