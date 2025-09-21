@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 
 // Create or update a website
-export const upsertWebsite = mutation({
+export const upsertProject = mutation({
   args: {
     url: v.string(),
     name: v.optional(v.string()),
@@ -10,7 +10,7 @@ export const upsertWebsite = mutation({
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
-      .query("websites")
+      .query("projects")
       .withIndex("by_url", (q) => q.eq("url", args.url))
       .first();
 
@@ -25,12 +25,12 @@ export const upsertWebsite = mutation({
       return existing._id;
     } else {
       // Create new website
-      const websiteId = await ctx.db.insert("websites", {
+      const projectId = await ctx.db.insert("projects", {
         url: args.url,
         name: args.name || new URL(args.url).hostname,
         description: args.description,
       });
-      return websiteId;
+      return projectId;
     }
   },
 });
@@ -40,7 +40,7 @@ export const getByUrl = query({
   args: { url: v.string() },
   handler: async (ctx, args) => {
     return await ctx.db
-      .query("websites")
+      .query("projects")
       .withIndex("by_url", (q) => q.eq("url", args.url))
       .first();
   },
@@ -48,13 +48,13 @@ export const getByUrl = query({
 
 // Get website by ID
 export const getById = query({
-  args: { id: v.id("websites") },
+  args: { id: v.id("projects") },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
   },
 });
 
-// List all websites
+// List all projects
 export const list = query({
   args: {
     limit: v.optional(v.number()),
@@ -62,10 +62,33 @@ export const list = query({
   handler: async (ctx, args) => {
     const limit = args.limit || 50;
     return await ctx.db
-      .query("websites")
+      .query("projects")
       .withIndex("by_url")
       .order("desc")
       .take(limit);
+  },
+});
+
+// Update project details (name, description)
+export const updateProject = mutation({
+  args: {
+    id: v.id("projects"),
+    name: v.string(),
+    description: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const { id, ...updates } = args;
+
+    // Validate project exists
+    const project = await ctx.db.get(id);
+    if (!project) {
+      throw new Error("Project not found");
+    }
+
+    // Update the project
+    await ctx.db.patch(id, updates);
+
+    return id;
   },
 });
 
@@ -74,7 +97,7 @@ export const getWithLatestTestSession = query({
   args: { url: v.string() },
   handler: async (ctx, args) => {
     const website = await ctx.db
-      .query("websites")
+      .query("projects")
       .withIndex("by_url", (q) => q.eq("url", args.url))
       .first();
 
@@ -95,7 +118,7 @@ export const getWithLatestTestSession = query({
 
 // Delete a website and all its data
 export const deleteWebsite = mutation({
-  args: { id: v.id("websites") },
+  args: { id: v.id("projects") },
   handler: async (ctx, args) => {
     // Delete all test sessions for this website
     const testSessions = await ctx.db
@@ -109,8 +132,8 @@ export const deleteWebsite = mutation({
 
     // Delete all website-specific tests
     const tests = await ctx.db
-      .query("tests")
-      .withIndex("by_website", (q) => q.eq("websiteId", args.id))
+      .query("customTests")
+      .withIndex("by_project", (q) => q.eq("projectId", args.id))
       .collect();
 
     for (const test of tests) {

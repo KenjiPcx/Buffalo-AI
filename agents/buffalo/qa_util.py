@@ -26,17 +26,18 @@ Notes:
 
 import logging
 import base64
+from textwrap import dedent
 import time
 import asyncio
-import json
 from typing import List, Optional, Literal
-from browser_use import Agent, BrowserProfile, BrowserSession, llm
+from browser_use import Agent, BrowserProfile, BrowserSession
 from browser_use.browser.views import BrowserStateSummary
-from browser_use.llm.messages import UserMessage
+import firecrawl
 from pydantic import BaseModel, Field
 import requests
 
-from configs import convex_client, get_screen_dimensions, model, browser_llm, browser_profile
+from custom_types import Task, UniqueUrls, TestingTaskList
+from configs import convex_client, get_screen_dimensions, model, browser_llm
 logger = logging.getLogger(__name__)
 
 class TestExecutionResult(BaseModel):
@@ -66,7 +67,7 @@ def _extract_final_result_text(history) -> str:
         logger.exception("Failed extracting final result from history: %s", e)
         return str(history)
 
-async def run_prod_checks(prod_checks: List[str], num_agents: int = 3, headless: bool = False, test_session_id: str = None):
+async def run_prod_checks(base_url: str, prod_checks: List[Task], num_agents: int = 3, headless: bool = False, test_session_id: str = None):
     """
     QA check prod checks orchestrator, process tasks in batches
     """
@@ -74,13 +75,13 @@ async def run_prod_checks(prod_checks: List[str], num_agents: int = 3, headless:
         "testSessionId": test_session_id,
         "message": f"Running {len(prod_checks)} prod checks"
     })
-    await run_pool(prod_checks, num_agents, headless, tag="preprod_checks", test_session_id=test_session_id)
+    await run_pool(prod_checks, base_url, num_agents, headless, tag="preprod_checks", test_session_id=test_session_id)
     convex_client.mutation("testSessions:addMessageToTestSession", {
         "testSessionId": test_session_id,
         "message": f"Completed {len(prod_checks)} prod checks"
     })
 
-async def run_user_flow_testing(user_flow_tasks: List[str], num_agents: int = 3, headless: bool = False, test_session_id: str = None):
+async def run_user_flow_testing(base_url: str, user_flow_tasks: List[Task], num_agents: int = 3, headless: bool = False, test_session_id: str = None):
     """
     QA check user flow tasks orchestrator, process tasks in batches
     """
@@ -88,29 +89,54 @@ async def run_user_flow_testing(user_flow_tasks: List[str], num_agents: int = 3,
         "testSessionId": test_session_id,
         "message": f"Running {len(user_flow_tasks)} user flow tasks"
     })
-    await run_pool(user_flow_tasks, num_agents, headless, tag="user_flow", test_session_id=test_session_id)
+    await run_pool(user_flow_tasks, base_url, num_agents, headless, tag="user_flow", test_session_id=test_session_id)
     convex_client.mutation("testSessions:addMessageToTestSession", {
         "testSessionId": test_session_id,
         "message": f"Completed {len(user_flow_tasks)} user flow tasks"
     })
 
-async def run_exploratory_testing(starting_urls: List[str], num_agents: int = 3, headless: bool = False, test_session_id: str = None):
+async def generate_sitemap(base_url: str) -> list:
+    """Generate a sitemap for a website"""
+    res = firecrawl.map(url=base_url, limit=35)
+
+    # Get all the unique urls from the sitemap
+    prompt = f"""
+    Ask the Firecrawl agent to generate a sitemap from the website URL, then normalize paths by stripping query params and collapsing dynamic segments (e.g., treat /product/123 and /product/456 as the same type). For each type, select one representative URL (e.g., keep /product/123, drop the rest), it should return you a bunch of starting points within the website to test
+
+    Return an array of starting points
+    Sitemap:
+    {res}
+    """
+    response: UniqueUrls = await model.with_structured_output(UniqueUrls).ainvoke(prompt)
+    return response.urls
+    
+async def run_exploratory_testing(base_url: str, num_agents: int = 3, headless: bool = False, test_session_id: str = None):
     """
     QA check websites orchestrator, it will:
-    1. Loop through each starting URL
-    2. Call the run_pool function to test the website
-    3. Return the results
+    1. Get a sitemap of the base url
+    2. Loop through each starting URL
+    3. Call the run_pool function to test the website
+    4. Return the results
     
     Args:
         starting_urls: List of starting URLs to test, these should be the starting points within a website to test
     """
+
+    convex_client.mutation("testSessions:addMessageToTestSession", {
+        "testSessionId": test_session_id,
+        "message": f"Generating sitemap for {base_url}"
+    })
+
+    starting_urls = await generate_sitemap(base_url)
+
     convex_client.mutation("testSessions:addMessageToTestSession", {
             "testSessionId": test_session_id,
             "message": f"Crawled {len(starting_urls)} starting URLs"
         })
 
+    existing_tasks = []
     for starting_url in starting_urls:
-        qa_tasks = await scout_page(starting_url)
+        qa_tasks = await scout_page(starting_url, existing_tasks=existing_tasks)
 
         convex_client.mutation("testSessions:addMessageToTestSession", {
             "testSessionId": test_session_id,
@@ -129,7 +155,7 @@ async def run_exploratory_testing(starting_urls: List[str], num_agents: int = 3,
         "message": f"Completed exploratory testing"
     })
 
-async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headless: bool = False, tag: str | None = None, test_session_id: str = None) -> str:
+async def run_pool(tasks: List[Task], base_url: str, num_agents: int = 3, headless: bool = False, tag: str | None = None, test_session_id: str = None) -> str:
     start_time = time.time()
 
     task_execution_ids = []
@@ -138,16 +164,52 @@ async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headles
     for task in tasks:
         task_execution_id = convex_client.mutation("testExecutions:createTestExecution", {
             "testSessionId": test_session_id,
-            "name": task,
-            "prompt": task,
+            "name": task.name,
+            "prompt": task.prompt,
             "type": tag,
             "websiteUrl": base_url
         })
         task_execution_ids.append(task_execution_id)
         logger.debug("Created test execution id=%s for task='%s'", task_execution_id, task)
 
+    browser_agent_system_prompt = dedent(f"""
+        You are a browser automation agent that executes a single test task.
+        You will be given a task description and a website URL.
+        You will need to execute the task on the website.
+        
+        ## QA Agent Self-Check Questions
+
+        ### Clarity of Test
+        - Am I **specific enough**? (Each step references exact elements or actions, not vague goals)
+        - Did I **name actions directly** (e.g. `click_element`, `extract_structured_data`) instead of open-ended instructions?
+
+        ### Execution Validity
+        - Did I **navigate to the correct page/URL**?
+        - Was the **target element found and interactable** (visible, enabled, not hidden)?
+        - If direct click fails, did I try a **keyboard navigation fallback** (`send_keys`)?
+
+        ### Outcome Expectations
+        - Did the **expected success outcome** occur (URL/route, DOM update, toast, API 2xx)?
+        - If not, was there a **clear failure outcome** (error message, validation, 4xx/5xx)?
+        - If neither, is the result **ambiguous** and should I warn?
+
+        ### Robustness & Recovery
+        - Did I attempt **error recovery** (retry navigation, refresh, go_back, alternate path) before failing?
+        - For flows with custom actions (e.g. 2FA), did I call the **correct integration** instead of hacking around?
+
+        ### Evidence
+        - Did I capture **proof** (screenshot, console errors, key network logs)?
+        - Could another tester understand the **issue from my output alone**?
+
+        ### Warnings
+        - Should I warn about:
+        - **Blockers** (auth walls, missing element, infinite spinner)?
+        - **Flakiness** (passes only after retries, unstable selectors)?
+        - **Gaps** (no oracle, missing test data, unclear outcome)?
+    """)
+
     async def run_single_agent(i: int):
-        task_description = tasks[i]
+        task_description =  browser_agent_system_prompt + f"\n\nTask to test:\n{tasks[i].prompt}"
 
         # Update the task execution status to running
         convex_client.mutation("testExecutions:updateTestExecutionStatus", {
@@ -179,10 +241,11 @@ async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headles
                 # window positioning for non-headless mode
                 screen_width, screen_height = get_screen_dimensions()
                 
-                window_width = 300
-                window_height = 400
-                viewport_width = 280
-                viewport_height = 350
+                # Use a typical desktop browser size while respecting available screen space
+                window_width = min(1280, max(800, screen_width - 40))
+                window_height = min(800, max(600, screen_height - 80))
+                viewport_width = window_width
+                viewport_height = max(600, window_height - 80)
                 
                 margin = 10
                 spacing = 15
@@ -344,7 +407,7 @@ async def run_pool(tasks: List[str], base_url: str, num_agents: int = 3, headles
     logger.info("run_pool completed for %s in %.2fs", base_url, test_data["duration"])
     return test_data
 
-async def scout_page(base_url: str) -> list:
+async def scout_page(base_url: str, existing_tasks: list[Task]) -> list[Task]:
     """Scout agent that identifies all interactive elements on the page"""
     try:
         logger.info("Scout starting for base_url=%s", base_url)
@@ -397,70 +460,86 @@ async def scout_page(base_url: str) -> list:
         logger.debug("Scout final_result (truncated): %s", _truncate(scout_result))
         
         # partition elements with llm
-        partition_prompt = f"""
-Based on this scout report of interactive elements found on {base_url}:
+        partition_prompt = dedent(f"""
+            You are generating HIGH-VALUE browser tests from a scout report of interactive elements on {base_url}.
 
-{scout_result}
+            Goal:
+            Produce 4–6 NON-OVERLAPPING tasks that each:
+            - Start with navigation to {base_url}
+            - Target ONE specific element (high signal)
+            - Name concrete ACTIONS to use (e.g., go_to_url, click_element_by_text, send_keys, extract_structured_data)
+            - Define success/failure oracles
+            - Avoid low-value tests (e.g., “can type in field”)
 
-Create a list of specific testing tasks, each focusing on different elements. Each task should specify exactly which elements to test (by their text, location, or description). Aim for 6-8 distinct tasks that cover different elements without overlap.
+            Scout report:
+            {scout_result}
 
-Format as JSON array:
-[
-    "Navigate to {base_url} using go_to_url, then test the [specific element description] - click on [exact button/link text or location]",
-    "Navigate to {base_url} using go_to_url, then test the [different specific element] - interact with [exact description]",
-    ...
-]
+            Existing tasks to avoid duplicating:
+            {existing_tasks}
 
-Make each task very specific about which exact elements to test. ALWAYS start each task with navigation instructions.
-"""
-        
-        # Format prompt as proper message for the LLM  
-        from browser_use.llm.messages import UserMessage
-        partition_messages = [UserMessage(content=partition_prompt)]
+            Rules:
+            1) Prioritize end-to-end goals (navigate, submit, login) over trivial clicks.
+            2) Be SPECIFIC about the element and provide a STABLE locator (prefer data-testid; else role+name; else exact text; avoid brittle CSS).
+            3) State PRECONDITIONS (auth, seeded data). If login needed, include the login steps explicitly.
+            4) Define ORACLES: route/URL change, DOM assertion, toast text, API status/method/path. No vague “should work”.
+            5) Include ONE valuable NEGATIVE check (e.g., duplicate email shows “Email in use”).
+            6) EXPLICIT WAITS by condition (element visible/enabled, network call settled). Avoid fixed sleeps unless recovery requires it.
+            7) Deduplicate intents vs {existing_tasks}. If similar, pick a different element or path.
+
+            Action usage guidelines (keep it concrete):
+            - Name actions directly: e.g., use search_google, click_element_by_index, scroll, extract_structured_data, write_file, send_keys.
+            - Keyboard fallback if clicking fails: use send_keys with sequences like "Tab Tab Enter" or "ArrowDown ArrowDown Enter".
+            - Custom actions (if available): ALWAYS use them when relevant (e.g., get_2fa_code for 2FA). NEVER scrape 2FA codes from the page.
+            - Error recovery: if navigation blocked by anti-bot/captcha, try search_google → open result; if timeout, use go_back and retry once, then warn.
+
+            Output format (JSON array of compact tasks):
+            {{
+                "tasks": [
+                    {{
+                        "name": "Test [element intent/description]",
+                        "prompt": "Navigate to {base_url} using go_to_url, then [named ACTION with exact target]. Expect SUCCESS: [specific oracle]. If click fails, use send_keys fallback. If page times out, go_back and retry once. Expect FAILURE: [specific error] if applicable."
+                    }}
+                ]
+            }}
+
+            Make each task VERY specific about which exact element to test and which ACTIONS to call. ALWAYS start with navigation.
+        """)
         logger.info("Scout partitioning elements via LLM")
-        partition_response = await browser_llm.ainvoke(partition_messages)
+        partition_response: TestingTaskList = await model.with_structured_output(TestingTaskList).ainvoke(partition_prompt)
         logger.debug("Partition LLM raw response (truncated): %s", _truncate(partition_response))
         
-        # parse response
-        import re
-        # Handle different response types - check multiple possible attributes
-        if hasattr(partition_response, 'content'):
-            response_text = str(partition_response.content)
-        elif hasattr(partition_response, 'completion'):
-            response_text = str(partition_response.completion)
-        elif hasattr(partition_response, 'text'):
-            response_text = str(partition_response.text)
-        else:
-            response_text = str(partition_response)
-        logger.debug("Partition response text (truncated): %s", _truncate(response_text))
-        json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
-        if json_match:
-            element_tasks = json.loads(json_match.group())
-            logger.info("Scout partitioned %d element tasks", len(element_tasks))
-        else:
-            # fallback tasks
-            element_tasks = [
-                f"Test navigation elements in the header area of {base_url}",
-                f"Test main content links and buttons in {base_url}",
-                f"Test footer links and elements in {base_url}",
-                f"Test any form elements found in {base_url}",
-                f"Test sidebar or secondary navigation in {base_url}",
-                f"Test any remaining interactive elements in {base_url}"
-            ]
-            logger.warning("Scout partition JSON parse failed; using fallback tasks (%d)", len(element_tasks))
-        
+        element_tasks = partition_response.tasks
+        logger.info("Scout partitioned %d element tasks", len(element_tasks))
         return element_tasks
         
     except Exception as e:
         # fallback tasks if scouting fails
         logger.exception("Scout failed for base_url=%s: %s", base_url, e)
         return [
-            f"Test navigation elements in the header area of {base_url}",
-            f"Test main content links and buttons in {base_url}",
-            f"Test footer links and elements in {base_url}",
-            f"Test any form elements found in {base_url}",
-            f"Test sidebar or secondary navigation in {base_url}",
-            f"Test any remaining interactive elements in {base_url}"
+            Task(
+                name="Test navigation elements in the header area",
+                prompt=f"Navigate to {base_url} using go_to_url, then test the navigation elements in the header area, expect [expected output]"
+            ),
+            Task(
+                name="Test main content links and buttons",
+                prompt=f"Navigate to {base_url} using go_to_url, then test the main content links and buttons, expect [expected output]"
+            ),
+            Task(
+                name="Test footer links and elements",
+                prompt=f"Navigate to {base_url} using go_to_url, then test the footer links and elements, expect [expected output]"
+            ),
+            Task(
+                name="Test any form elements found",
+                prompt=f"Navigate to {base_url} using go_to_url, then test the any form elements found, expect [expected output]"
+            ),
+            Task(
+                name="Test sidebar or secondary navigation",
+                prompt=f"Navigate to {base_url} using go_to_url, then test the sidebar or secondary navigation, expect [expected output]"
+            ),
+            Task(
+                name="Test any remaining interactive elements",
+                prompt=f"Navigate to {base_url} using go_to_url, then test the any remaining interactive elements, expect [expected output]"
+            )
         ]
 
 class Issue(BaseModel):
@@ -475,7 +554,6 @@ class ReportGenerator(BaseModel):
     """Always use this tool to structure your response to the user."""
     summary: str = Field(description="A summary of the test session.")
     issues: List[Issue] = Field(description="A list of issues found during the test session.")
-
 
 async def summarize_test_session(test_session_id: str) -> str:
     """Summarize a test session"""

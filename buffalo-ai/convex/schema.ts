@@ -3,7 +3,7 @@ import { v } from "convex/values";
 
 export default defineSchema({
   // Websites that can be tested
-  websites: defineTable({
+  projects: defineTable({
     url: v.string(),
     name: v.string(),
     description: v.optional(v.string()),
@@ -13,23 +13,21 @@ export default defineSchema({
     .index("by_url", ["url"]),
 
   // Test definitions - reusable test prompts/instructions
-  tests: defineTable({
+  customTests: defineTable({
     name: v.string(),
     prompt: v.string(), // The actual test instruction/prompt for the agent
     type: v.union(
-      v.literal("website-specific"), // Custom test for a specific website
-      v.literal("checklist")          // Generic production readiness check
+      v.literal("user-defined"), // Custom test for a specific website
+      v.literal("buffalo-defined")          // Generic production readiness check
     ),
-    websiteId: v.optional(v.id("websites")), // Only set for website-specific tests
-    category: v.optional(v.string()), // e.g., "security", "performance", "seo", "accessibility"
-    // Optional: owner of the test for user-specific saved tests
-    ownerId: v.optional(v.string()),
+    projectId: v.optional(v.id("projects")), // Only set for project-specific tests
+    category: v.optional(v.string()), // e.g., "security", "performance", "seo", "accessibility", "custom"
+    description: v.optional(v.string()), // Brief description of what this test checks
+    isActive: v.optional(v.boolean()), // Whether the test is active/enabled
   })
-    .index("by_website", ["websiteId"])
+    .index("by_project", ["projectId"])
     .index("by_type", ["type"])
-    .index("by_category", ["category"]) 
-    // Query user-specific website tests by ownerId, then websiteId
-    .index("by_owner_and_website", ["ownerId", "websiteId"]),
+    .index("by_category", ["category"]),
 
   // Test sessions - when we execute tests on a website
   testSessions: defineTable({
@@ -38,8 +36,8 @@ export default defineSchema({
     modes: v.array(
       v.union(
         v.literal("exploratory"),
-        v.literal("user_flow"),
-        v.literal("preprod_checklist"),
+        v.literal("user-defined"),
+        v.literal("buffalo-defined"),
       ),
     ),
     messages: v.optional(v.array(v.string())),
@@ -89,7 +87,7 @@ export default defineSchema({
       v.literal("skipped")
     ),
     websiteUrl: v.optional(v.string()),
-    type: v.optional(v.union(v.literal("exploratory"), v.literal("user_flow"), v.literal("preprod_checks"))),
+    type: v.optional(v.union(v.literal("exploratory"), v.literal("user-defined"), v.literal("buffalo-defined"))),
     passed: v.optional(v.boolean()),
     message: v.optional(v.string()), // Result commentary from the agent
     errorMessage: v.optional(v.union(v.string(), v.null())),

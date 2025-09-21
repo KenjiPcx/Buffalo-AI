@@ -14,11 +14,11 @@ import type {
   FunctionReference,
 } from "convex/server";
 import type * as coralSession from "../coralSession.js";
+import type * as customTests from "../customTests.js";
+import type * as projects from "../projects.js";
 import type * as testExecutions from "../testExecutions.js";
 import type * as testReports from "../testReports.js";
 import type * as testSessions from "../testSessions.js";
-import type * as tests from "../tests.js";
-import type * as websites from "../websites.js";
 
 /**
  * A utility for referencing Convex functions in your app's API.
@@ -30,11 +30,11 @@ import type * as websites from "../websites.js";
  */
 declare const fullApi: ApiFromModules<{
   coralSession: typeof coralSession;
+  customTests: typeof customTests;
+  projects: typeof projects;
   testExecutions: typeof testExecutions;
   testReports: typeof testReports;
   testSessions: typeof testSessions;
-  tests: typeof tests;
-  websites: typeof websites;
 }>;
 export declare const api: FilterApi<
   typeof fullApi,

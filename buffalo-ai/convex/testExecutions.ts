@@ -9,7 +9,7 @@ export const createTestExecution = mutation({
     name: v.string(),
     prompt: v.string(),
     websiteUrl: v.optional(v.string()),
-    type: v.optional(v.union(v.literal("exploratory"), v.literal("user_flow"), v.literal("preprod_checks"))),
+    type: v.optional(v.union(v.literal("exploratory"), v.literal("user-defined"), v.literal("buffalo-defined"))),
   },
   handler: async (ctx, args) => {
     const testExecutionId = await ctx.db.insert("testExecutions", {

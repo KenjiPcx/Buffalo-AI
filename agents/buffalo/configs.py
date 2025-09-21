@@ -4,6 +4,7 @@ from browser_use import BrowserProfile, ChatGoogle
 from convex import ConvexClient
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
+from firecrawl import Firecrawl
 
 load_dotenv()
 
@@ -54,3 +55,5 @@ def get_screen_dimensions():
         return screen.width, screen.height
     except Exception:
         return 1920, 1080
+
+firecrawl = Firecrawl(api_key=os.getenv("FIRECRAWL_API_KEY"))

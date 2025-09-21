@@ -6,16 +6,14 @@ import { Id } from "./_generated/dataModel";
 export const createTestSession = mutation({
   args: {
     websiteUrl: v.string(),
-    uniquePageUrls: v.optional(v.array(v.string())),
     modes: v.array(
       v.union(
         v.literal("exploratory"),
-        v.literal("user_flow"),
-        v.literal("preprod_checklist"),
+        v.literal("user-defined"),
+        v.literal("buffalo-defined"),
       ),
     ),
-    email: v.string(),
-    credentials: v.optional(v.record(v.string(), v.string())),
+    email: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Id<"testSessions">> => {
     const now = Date.now();
@@ -23,10 +21,8 @@ export const createTestSession = mutation({
     // Create the test session
     const testSessionId = await ctx.db.insert("testSessions", {
       websiteUrl: args.websiteUrl,
-      uniquePageUrls: args.uniquePageUrls,
       modes: args.modes,
-      email: args.email,
-      credentials: args.credentials,
+      email: args.email || "",
       status: "running",
       startedAt: now,
       messages: [],
